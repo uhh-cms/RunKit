@@ -1,11 +1,13 @@
+import json
 import re
 from enum import Enum
 
 class Status(Enum):
   Unknown = 0
-  Bootstrapped = 1
-  InProgress = 2
-  Finished = 3
+  Defined = 1
+  Bootstrapped = 2
+  InProgress = 3
+  Finished = 4
 
 class StatusOnServer(Enum):
   SUBMITTED = 1
@@ -35,11 +37,11 @@ class CrabWarning:
     r"the max jobs runtime is less than 30% of the task requested value": CrabWarningCategory.ShortRuntime,
     r"the average jobs CPU efficiency is less than 50%": CrabWarningCategory.LowCpuEfficiency,
   }
-  def __init__(self, warning_text):
+  def __init__(self, warning_message):
     self.category = CrabWarningCategory.Unknown
-    self.warning_text = warning_text
+    self.message = warning_message
     for known_warning, category in CrabWarning.known_warnings.items():
-      if re.match(known_warning, warning_text):
+      if re.match(known_warning, warning_message):
         self.category = category
         break
 
@@ -47,6 +49,7 @@ class LogEntryParser:
   @staticmethod
   def Parse(log_lines):
     task_status = CrabTaskStatus()
+    task_status.log_lines = ''.join(log_lines)
     n = 0
     N = len(log_lines)
     try:
@@ -243,12 +246,83 @@ class CrabTaskStatus:
   def __init__(self):
     self.status = Status.Unknown
     self.log_lines = None
-    self.job_stat = {}
-    self.n_jobs_total = None
     self.parse_error = None
-    self.error_stat = {}
+
+    self.project_dir = None
+    self.task_name = None
+    self.grid_scheduler = None
+    self.task_worker = None
+    self.status_on_server = None
+    self.task_url = None
+    self.dashboard_url = None
+    self.status_on_scheduler = None
     self.warnings = []
+    self.n_jobs_total = None
+    self.job_stat = {}
+    self.error_stat = {}
+    self.crab_log_file = None
     self.run_stat = {}
+
+  _string_fields = [ 'log_lines', 'parse_error', 'project_dir', 'task_name', 'grid_scheduler', 'task_worker',
+                     'task_url', 'dashboard_url', 'crab_log_file' ]
+  _enum_fields = [ 'status', 'status_on_server', 'status_on_scheduler' ]
+  _int_fields = [ 'n_jobs_total' ]
+
+  def to_json(self):
+    result = { }
+    for name in CrabTaskStatus._string_fields + CrabTaskStatus._enum_fields + CrabTaskStatus._int_fields:
+      value = getattr(self, name)
+      if value is None: continue
+      v_type = type(value)
+      if v_type in [str, int]:
+        result[name] = value
+      else:
+        result[name] = value.name
+
+    if len(self.warnings) > 0:
+      warnings = []
+      for warning in self.warnings:
+        warnings.append({ 'category': warning.category.name, 'message': warning.message })
+      result['warnings'] = warnings
+
+    if len(self.job_stat) > 0:
+      result['job_stat'] = { key.name: value for key,value in self.job_stat.items() }
+
+    if len(self.error_stat) > 0:
+      result['error_stat'] = self.error_stat
+
+    if len(self.run_stat) > 0:
+      result['run_stat'] = self.run_stat
+
+    return json.dumps(result, indent=2)
+
+  @staticmethod
+  def from_json(json_str):
+    result = json.loads(json_str)
+    task_status = CrabTaskStatus()
+
+    for name in CrabTaskStatus._string_fields + CrabTaskStatus._int_fields:
+      if name not in result: continue
+      setattr(task_status, name, result[name])
+    if 'status' in result:
+      task_status.status = Status[result['status']]
+    if 'status_on_server' in result:
+      task_status.status_on_server = StatusOnServer[result['status_on_server']]
+    if 'status_on_scheduler' in result:
+      task_status.status_on_scheduler = StatusOnScheduler[result['status_on_scheduler']]
+
+    for warning in result.get('warnings', []):
+      task_status.warnings.append(CrabWarning(warning['message']))
+
+    for name, stat in result.get('job_stat', {}).items():
+      task_status.job_stat[JobStatus[name]] = stat
+
+    if 'error_stat' in result:
+      task_status.error_stat = result['error_stat']
+    if 'run_stat' in result:
+      task_status.run_stat = result['run_stat']
+
+    return task_status
 
 if __name__ == "__main__":
   import sys
@@ -256,13 +330,19 @@ if __name__ == "__main__":
   log_file = sys.argv[1]
   with open(log_file, 'r') as f:
     log_lines = f.readlines()
-  jobStatus = LogEntryParser.Parse(log_lines)
-  print(jobStatus.status)
-  if jobStatus.status == Status.Unknown:
-    print(jobStatus.parse_error)
+  taskStatus = LogEntryParser.Parse(log_lines)
+  print(taskStatus.status)
+  if taskStatus.status == Status.Unknown:
+    print(taskStatus.parse_error)
   else:
-    for status, n in jobStatus.job_stat.items():
-      print(f'{status.name} {float(n)/jobStatus.n_jobs_total * 100:.1f}% ({n}/{jobStatus.n_jobs_total})')
-  for warning in jobStatus.warnings:
+    for status, n in taskStatus.job_stat.items():
+      print(f'{status.name} {float(n)/taskStatus.n_jobs_total * 100:.1f}% ({n}/{taskStatus.n_jobs_total})')
+  for warning in taskStatus.warnings:
     if warning.category == CrabWarningCategory.Unknown:
-      print(f'Unknown warning\n-----\n{warning.warning_text}\n-----\n')
+      print(f'Unknown warning\n-----\n{warning.message}\n-----\n')
+  json_str = taskStatus.to_json()
+  taskStatus2 = CrabTaskStatus.from_json(json_str)
+  json_str2 = taskStatus2.to_json()
+  if(json_str2 != json_str):
+    print(json_str)
+    raise RuntimeError("Problem with json save/load.")

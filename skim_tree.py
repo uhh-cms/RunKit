@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+from threading import active_count
 
 parser = argparse.ArgumentParser(description='Skim tree.')
 parser.add_argument('--input', required=True, type=str, help="input root file or txt file with a list of files")
@@ -11,8 +12,9 @@ parser.add_argument('--input-tree', required=True, type=str, help="input tree na
 parser.add_argument('--output-tree', required=False, type=str, default=None, help="output tree")
 parser.add_argument('--other-trees', required=False, default=None, help="other trees to copy")
 parser.add_argument('--sel', required=False, type=str, default=None, help="selection")
-parser.add_argument('--include-columns', required=False, default=None, type=str, help="columns to be included")
-parser.add_argument('--exclude-columns', required=False, default=None, type=str, help="columns to be excluded")
+parser.add_argument('--column-filters', required=False, default=None, type=str,
+                    help="""Comma separated statements to keep and drop columns based on exact names or regex patterns.
+                            By default, all columns will be included""")
 parser.add_argument('--input-prefix', required=False, type=str, default='',
                     help="prefix to be added to input each input file")
 parser.add_argument('--processing-module', required=False, type=str, default=None,
@@ -24,6 +26,7 @@ parser.add_argument('--input-range', required=False, type=str, default=None,
                     help="read only entries in range begin:end (before any selection)")
 parser.add_argument('--output-range', required=False, type=str, default=None,
                     help="write only entries in range begin:end (after all selections)")
+
 parser.add_argument('--update-output', action="store_true", help="Update output file instead of overriding it.")
 parser.add_argument('--verbose', required=False, type=int, default=3, help="number of threads")
 args = parser.parse_args()
@@ -39,12 +42,9 @@ if args.n_threads is None:
 
 if args.n_threads > 1:
     ROOT.ROOT.EnableImplicitMT(args.n_threads)
-columns_to_include = []
-if args.include_columns is not None:
-    columns_to_include = [ c.strip() for c in args.include_columns.split(',') if len(c.strip()) > 0 ]
-columns_to_exclude = []
-if args.exclude_columns is not None:
-    columns_to_exclude = [ c.strip() for c in args.exclude_columns.split(',') if len(c.strip()) > 0 ]
+column_filters = []
+if args.column_filters is not None:
+    column_filters = [ c.strip() for c in args.column_filters.split(',') if len(c.strip()) > 0 ]
 
 inputs = ROOT.vector('string')()
 if args.input.endswith('.root'):
@@ -81,28 +81,54 @@ if args.processing_module is not None:
     fn = getattr(module, module_desc[1])
     df = fn(df)
 
-def name_match(column, column_patterns):
-    for pattern in column_patterns:
-        if pattern[0] == '^':
-            if re.match(pattern, column) is not None:
-                return True
-        else:
-            if column == pattern:
-                return True
-    return False
+def name_match(column, pattern):
+    if pattern[0] == '^':
+        return re.match(pattern, column) is not None
+    return column == pattern
+
+all_columns = [ str(c) for c in df.GetColumnNames() ]
+selected_columns = { c for c in all_columns }
+excluded_columns = set()
+keep_prefix = "keep "
+drop_prefix = "drop "
+used_filters = set()
+for c_filter in column_filters:
+    if c_filter.startswith(keep_prefix):
+        keep = True
+        columns_from = excluded_columns
+        columns_to = selected_columns
+        prefix = keep_prefix
+    elif c_filter.startswith(drop_prefix):
+        keep = False
+        columns_from = selected_columns
+        columns_to = excluded_columns
+        prefix = drop_prefix
+    else:
+        raise RuntimeError(f'Unsupported filter = "{c_filter}".')
+    pattern = c_filter[len(prefix):]
+    if len(pattern) == 0:
+        raise RuntimeError(f'Filter with an empty pattern expression.')
+
+    to_move = [ c for c in columns_from if name_match(c, pattern)]
+    if len(to_move) > 0:
+        used_filters.add(c_filter)
+        for column in to_move:
+            columns_from.remove(column)
+            columns_to.add(column)
 
 branches = ROOT.vector('string')()
-for column in df.GetColumnNames():
-    column = str(column)
-    include_column = False
-    if len(columns_to_include) == 0 or name_match(column, columns_to_include):
-        include_column = True
-    if name_match(column, columns_to_exclude):
-        include_column = False
-    if include_column:
+for column in all_columns:
+    if column in selected_columns:
         branches.push_back(column)
         if args.verbose > 2:
             print("Adding column '{}'...".format(column))
+
+unused_filters = []
+for c_filter in column_filters:
+    if c_filter not in used_filters:
+        unused_filters.append(c_filter)
+if len(unused_filters) > 0:
+    print("Unused column filters: " + " ".join(unused_filters))
 
 if args.sel is not None:
     df = df.Filter(args.sel)
