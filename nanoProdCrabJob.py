@@ -42,52 +42,52 @@ def make_job_report(exit_code, exit_message=''):
     f.write(report_str)
   shutil.move('FrameworkJobReport.xml.tmp', 'FrameworkJobReport.xml')
 
-def runJob(cmsDriver_out, final_out, store_failed=False):
-  p = PSet.process
-  input_files = list(p.source.fileNames)
+def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=True, store_failed=False):
+  if run_cmsDriver:
+    p = PSet.process
+    input_files = list(p.source.fileNames)
+
+    n_threads = 1
+    cmd = [
+      'cmsDriver.py', 'nano', '--fileout', f'file:{cmsDriver_out}', '--eventcontent', 'NANOAODSIM',
+      '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
+      #'--customise', 'NanoProd/NanoProd/customize.customize',
+      '--filein', ','.join(input_files), f'--{p.exParams.sampleType.value()}',
+      '--conditions', p.exParams.cond.value(),
+      '--era', f"{p.exParams.era.value()}",
+      '-n', f'{p.maxEvents.input.value()}'
+    ]
+
+    customise = p.exParams.customisationFunction.value()
+    if len(customise) > 0:
+      cmd.extend(['--customise', customise])
+
+    sh_call(cmd, verbose=1)
 
   skim_cfg = 'skim.yaml'
   skim_failed_cfg = 'skim_failed.yaml'
-  n_threads = 1
-  cmd = [
-    'cmsDriver.py', 'nano', '--fileout', f'file:{cmsDriver_out}', '--eventcontent', 'NANOAODSIM',
-    '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
-    #'--customise', 'NanoProd/NanoProd/customize.customize',
-    '--filein', ','.join(input_files), f'--{p.exParams.sampleType.value()}',
-    '--conditions', p.exParams.cond.value(),
-    '--era', f"{p.exParams.era.value()}",
-    '-n', f'{p.maxEvents.input.value()}'
-  ]
-
-  customise = p.exParams.customisationFunction.value()
-  if len(customise) > 0:
-    cmd.extend(['--customise', customise])
-
-  sh_call(cmd, verbose=1)
-
-
-  with open(skim_cfg, 'r') as f:
-    skim_config = yaml.safe_load(f)
-
-
   skim_tree_path = 'skim_tree.py'
-  cmd_line = ['python3', skim_tree_path, '--input', cmsDriver_out, '--output', final_out, '--input-tree', 'Events',
-              '--other-trees', 'LuminosityBlocks,Runs', '--verbose', '1']
+  if run_skim:
+    with open(skim_cfg, 'r') as f:
+      skim_config = yaml.safe_load(f)
 
-  if 'selection' in skim_config:
-    selection = skim_config['selection']
-    cmd_line.extend(['--sel', selection])
+    cmd_line = ['python3', skim_tree_path, '--input', cmsDriver_out, '--output', final_out, '--input-tree', 'Events',
+                '--other-trees', 'LuminosityBlocks,Runs', '--verbose', '1']
 
-  if 'processing_module' in skim_config:
-    proc_module = skim_config['processing_module']
-    cmd_line.extend(['--processing-module', proc_module['file'] + ':' + proc_module['function']])
+    if 'selection' in skim_config:
+      selection = skim_config['selection']
+      cmd_line.extend(['--sel', selection])
 
-  if 'column_filters' in skim_config:
-    columns = ','.join(skim_config['column_filters'])
-    cmd_line.extend([f'--column-filters', columns])
+    if 'processing_module' in skim_config:
+      proc_module = skim_config['processing_module']
+      cmd_line.extend(['--processing-module', proc_module['file'] + ':' + proc_module['function']])
+
+    if 'column_filters' in skim_config:
+      columns = ','.join(skim_config['column_filters'])
+      cmd_line.extend([f'--column-filters', columns])
 
 
-  sh_call(cmd_line, verbose=1)
+    sh_call(cmd_line, verbose=1)
 
   if store_failed:
     with open(skim_failed_cfg, 'r') as f:
@@ -116,12 +116,14 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
       cmsDriver_out = sys.argv[1]
       final_out = sys.argv[2]
-      store_failed = sys.argv[3] == 'True'
+      run_cmsDriver = sys.argv[3] == 'True'
+      run_skim = sys.argv[4] == 'True'
+      store_failed = sys.argv[5] == 'True'
     else:
       cmsDriver_out = 'nanoOrig.root'
       final_out = 'nano.root'
       store_failed = False
-    runJob(cmsDriver_out, final_out, store_failed)
+    runJob(cmsDriver_out, final_out, run_cmsDriver=run_cmsDriver, run_skim=run_skim, store_failed=store_failed)
     make_job_report(0)
   except ShCallError as e:
     print(f'ERROR: {e}')

@@ -12,6 +12,7 @@ parser.add_argument('--input-tree', required=True, type=str, help="input tree na
 parser.add_argument('--output-tree', required=False, type=str, default=None, help="output tree")
 parser.add_argument('--other-trees', required=False, default=None, help="other trees to copy")
 parser.add_argument('--sel', required=False, type=str, default=None, help="selection")
+parser.add_argument('--invert-sel', action="store_true", help="Invert selection.")
 parser.add_argument('--column-filters', required=False, default=None, type=str,
                     help="""Comma separated statements to keep and drop columns based on exact names or regex patterns.
                             By default, all columns will be included""")
@@ -131,7 +132,10 @@ if len(unused_filters) > 0:
     print("Unused column filters: " + " ".join(unused_filters))
 
 if args.sel is not None:
-    df = df.Filter(args.sel)
+    if args.invert_sel:
+        df = df.Define('__passSkimSel', args.sel).Filter('!__passSkimSel')
+    else:
+        df = df.Filter(args.sel)
 
 if args.output_range is not None:
     begin, end = [ int(x) for x in args.output_range.split(':') ]
