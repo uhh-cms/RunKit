@@ -8,38 +8,44 @@ options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing
                  "Indicates the sample type: data or mc")
 options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018")
+options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Skimming configuration in YAML format.")
+options.register('storeFailed', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
+                 "Store minimal information about events that failed selection.")
 options.register('customise', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Production customization code (if any)")
 
 options.parseArguments()
 
 cond_mc = {
-    'Run2_2016_HIPM': 'auto:run2_mc_pre_vfp',
-    'Run2_2016': 'auto:run2_mc',
-    'Run2_2017': 'auto:phase1_2017_realistic',
-    'Run2_2018': 'auto:phase1_2018_realistic',
+  'Run2_2016_HIPM': 'auto:run2_mc_pre_vfp',
+  'Run2_2016': 'auto:run2_mc',
+  'Run2_2017': 'auto:phase1_2017_realistic',
+  'Run2_2018': 'auto:phase1_2018_realistic',
 }
 cond_data = 'auto:run2_data'
 
 if options.sampleType == 'data':
-    cond = cond_data
+  cond = cond_data
 elif options.sampleType == 'mc':
-    cond = cond_mc[options.era]
+  cond = cond_mc[options.era]
 else:
-    raise RuntimeError(f"Unknown sample type {options.sampleType}")
+  raise RuntimeError(f"Unknown sample type {options.sampleType}")
 
 process = cms.Process('NanoProd')
 process.source = cms.Source("PoolSource", fileNames = cms.untracked.vstring(options.inputFiles))
 process.options = cms.untracked.PSet(wantSummary = cms.untracked.bool(False))
 process.maxEvents = cms.untracked.PSet(input = cms.untracked.int32(-1))
 if options.maxEvents > 0:
-    process.maxEvents.input = options.maxEvents
+  process.maxEvents.input = options.maxEvents
 process.exParams = cms.untracked.PSet(
-    sampleType = cms.untracked.string(options.sampleType),
-    era = cms.untracked.string(options.era + ',run2_nanoAOD_106Xv2'),
-    cond = cms.untracked.string(cond),
-    customisationFunction = cms.untracked.string(options.customise),
+  sampleType = cms.untracked.string(options.sampleType),
+  era = cms.untracked.string(options.era + ',run2_nanoAOD_106Xv2'),
+  cond = cms.untracked.string(cond),
+  skimCfg = cms.untracked.string(options.skimCfg),
+  storeFailed = cms.untracked.bool(options.storeFailed),
+  customisationFunction = cms.untracked.string(options.customise),
 )
 
 with open('PSet.py', 'w') as f:
-    print(process.dumpPython(), file=f)
+  print(process.dumpPython(), file=f)

@@ -1,12 +1,7 @@
 #/bin/bash
 
-prod_py="nanoProdCrabJob.py"
-if ! [ -f "$prod_py" ] ; then
-  prod_py="$CMSSW_BASE/src/nanoProdCrabJob.py"
-fi
-if ! [ -f "$prod_py" ] ; then
-  prod_py="$ANALYSIS_PATH/RunKit/nanoProdCrabJob.py"
-fi
+prod_sh_dir="$(dirname "$0")"
+prod_py="$prod_sh_dir/nanoProdCrabJob.py"
 if ! [ -f "$prod_py" ] ; then
   echo "ERROR: nanoProdCrabJob.py not found"
   exit 1
