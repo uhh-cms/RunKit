@@ -3,7 +3,6 @@
 import argparse
 import os
 import re
-from threading import active_count
 
 parser = argparse.ArgumentParser(description='Skim tree.')
 parser.add_argument('--input', required=True, type=str, help="input root file or txt file with a list of files")

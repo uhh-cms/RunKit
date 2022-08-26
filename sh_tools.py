@@ -69,7 +69,7 @@ def xrd_copy(input_file_name, local_name, n_retries=4, n_retries_xrdcp=4, n_stre
             xrdcp_args.extend([f'{prefix}{input_file_name}', local_name])
             sh_call(xrdcp_args, verbose=1)
             return True
-        except RuntimeError as e:
+        except ShCallError as e:
             return False
 
     def check_download():

@@ -1,11 +1,11 @@
-import imp
+import importlib.util
 import os
 import shutil
 import sys
 import traceback
 import yaml
 
-from sh_tools import sh_call, ShCallError
+from sh_tools import sh_call, ShCallError, xrd_copy
 
 _error_msg_fmt = '''
 <FrameworkError ExitStatus="{}" Type="Fatal error" >
@@ -35,6 +35,8 @@ _job_report_fmt = '''
 </FrameworkJobReport>
 '''
 
+files_to_remove = []
+
 def make_job_report(exit_code, exit_message=''):
   if exit_code == 0:
     error_msg = ''
@@ -45,9 +47,27 @@ def make_job_report(exit_code, exit_message=''):
     f.write(report_str)
   shutil.move('FrameworkJobReport.xml.tmp', 'FrameworkJobReport.xml')
 
+def exit(exit_code, exit_message=''):
+  for file in files_to_remove:
+    try:
+      os.remove(file)
+    except:
+      pass
+  make_job_report(exit_code, exit_message)
+
 def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_failed=None):
-  pset_path = os.path.join(os.getenv("CMSSW_BASE"), 'src', 'PSet.py')
-  PSet = imp.load_source('PSet', pset_path)
+
+  pset_path = 'PSet.py'
+  if not os.path.exists(pset_path):
+    pset_path = os.path.join(os.getenv("CMSSW_BASE"), 'src', 'PSet.py')
+  if not os.path.exists(pset_path):
+    raise RuntimeError("Cannot find path to PSet.py.")
+
+  spec = importlib.util.spec_from_file_location("PSet", pset_path)
+  PSet = importlib.util.module_from_spec(spec)
+  sys.modules["PSet"] = PSet
+  spec.loader.exec_module(PSet)
+
   p = PSet.process
   skim_cfg = p.exParams.skimCfg.value()
   if store_failed is None:
@@ -57,23 +77,57 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
 
   if run_cmsDriver:
 
-    input_files = list(p.source.fileNames)
-
     n_threads = 1
-    cmd = [
+    cmd_base = [
       'cmsDriver.py', 'nano', '--fileout', f'file:{cmsDriver_out}', '--eventcontent', 'NANOAODSIM',
       '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
-      '--filein', ','.join(input_files), f'--{p.exParams.sampleType.value()}',
-      '--conditions', p.exParams.cond.value(),
-      '--era', f"{p.exParams.era.value()}",
-      '-n', f'{p.maxEvents.input.value()}'
+      f'--{p.exParams.sampleType.value()}', '--conditions', p.exParams.cond.value(),
+      '--era', f"{p.exParams.era.value()}", '-n', f'{p.maxEvents.input.value()}'
     ]
 
     customise = p.exParams.customisationFunction.value()
     if len(customise) > 0:
-      cmd.extend(['--customise', customise])
+      cmd_base.extend(['--customise', customise])
 
-    sh_call(cmd, verbose=1)
+    input_remote_files = list(p.source.fileNames)
+    success = False
+    exception = None
+    try:
+      cmd = [ c for c in cmd_base ]
+      cmd.extend(['--filein', ','.join(input_remote_files)])
+      sh_call(cmd, verbose=1)
+      success = True
+    except ShCallError as e:
+      exception = e
+      print("cmsRun has failed.")
+      pass
+
+    if not success:
+      input_files = [ ]
+      has_remote_files = False
+      for n, remote_file in enumerate(input_remote_files):
+        if len(remote_file) == 0:
+          raise RuntimeError("Empty input file name.")
+        if remote_file.startswith('file:'):
+          input_files.append(remote_file)
+        else:
+          if not has_remote_files:
+            print("Copying remote files locally...")
+            has_remote_files = True
+          local_file = f'inputMiniAOD_{n}.root'
+          xrd_copy(remote_file, local_file, silent=False)
+          input_files.append(f'file:{local_file}')
+          files_to_remove.append(local_file)
+
+      if has_remote_files:
+        print("All file have been copied locally. Trying to run cmsRun the second time.")
+        cmd = [ c for c in cmd_base ]
+        cmd.extend(['--filein', ','.join(input_files)])
+        sh_call(cmd, verbose=1)
+        success = True
+
+    if not success:
+      raise exception
 
   skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
   if run_skim:
@@ -94,7 +148,6 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
     if 'column_filters' in skim_config:
       columns = ','.join(skim_config['column_filters'])
       cmd_line.extend([f'--column-filters', columns])
-
 
     sh_call(cmd_line, verbose=1)
 
@@ -132,15 +185,15 @@ if __name__ == "__main__":
       cmsDriver_out = 'nanoOrig.root'
       final_out = 'nano.root'
     runJob(cmsDriver_out, final_out, **kwargs)
-    make_job_report(0)
+    exit(0)
   except ShCallError as e:
     print(traceback.format_exc())
-    make_job_report(e.return_code, str(e))
+    exit(e.return_code, str(e))
   except Exception as e:
     print(traceback.format_exc())
-    make_job_report(666, str(e))
+    exit(666, str(e))
   except:
     print(traceback.format_exc())
-    make_job_report(666, 'Unexpected error')
+    exit(666, 'Unexpected error')
 
 

@@ -3,11 +3,12 @@ import re
 from enum import Enum
 
 class Status(Enum):
-  Unknown = 0
-  Defined = 1
-  Bootstrapped = 2
-  InProgress = 3
-  Finished = 4
+  Unknown = -1
+  Defined = 0
+  Submitted = 1
+  Bootstrapped = 3
+  InProgress = 4
+  Finished = 5
 
 class StatusOnServer(Enum):
   SUBMITTED = 1
@@ -49,6 +50,7 @@ class LogEntryParser:
   @staticmethod
   def Parse(log_lines):
     task_status = CrabTaskStatus()
+    log_lines = [ l.replace('\t', '    ') for l in log_lines ]
     task_status.log_lines = ''.join(log_lines)
     n = 0
     N = len(log_lines)

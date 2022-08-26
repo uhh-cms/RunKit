@@ -7,5 +7,10 @@ if ! [ -f "$prod_py" ] ; then
   exit 1
 fi
 
-python3 "$prod_py" "$@"
+if [ "x$1" = "xDEBUG" ] ; then
+  python3 "$prod_py" "${@:2}"
+else
+  python3 "$prod_py"
+fi
+
 exit 0
