@@ -8,9 +8,9 @@ if ! [ -f "$prod_py" ] ; then
 fi
 
 if [ "x$1" = "xDEBUG" ] ; then
-  python3 "$prod_py" "${@:2}"
+  python3 -u "$prod_py" "${@:2}"
 else
-  python3 "$prod_py"
+  python3 -u "$prod_py"
 fi
 
 exit 0

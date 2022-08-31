@@ -1,12 +1,17 @@
 #from http.client import HTTPException
 import traceback
 import sys
+import os
 
-from crabTask import Task
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  sys.path.append(os.path.dirname(file_dir))
+  __package__ = 'RunKit'
+
+from .crabTask import Task
 
 from CRABClient.UserUtilities import ClientException
 from CRABClient.UserUtilities import config as Config
-from CRABClient.UserUtilities import getUsernameFromCRIC as getUsername
 from CRABAPI.RawCommand import crabCommand
 
 def submit(task: Task):
@@ -19,7 +24,7 @@ def submit(task: Task):
 
   config.JobType.pluginName = 'Analysis'
   config.JobType.psetName = task.cmsswPython
-  config.JobType.maxMemoryMB = task.maxMemory
+  config.JobType.maxMemoryMB = task.getMaxMemory()
   config.JobType.numCores = task.numCores
   config.JobType.sendPythonFolder = True
 
@@ -42,41 +47,27 @@ def submit(task: Task):
   if len(task.vomsRole) != 0:
     config.User.voRole = task.vomsRole
 
-  if task.crabOutput[0] == '/':
-    config.Data.outLFNDirBase = task.crabOutput
-  else:
-    config.Data.outLFNDirBase = "/store/user/{}/{}".format(getUsername(), task.crabOutput)
+  config.Data.outLFNDirBase = task.crabOutput
 
   if len(task.blacklist) != 0:
     config.Site.blacklist = task.blacklist
   if len(task.whitelist) != 0:
     config.Site.whitelist = task.whitelist
 
-  config.JobType.pyCfgParams = task.params
-  config.Data.unitsPerJob = task.unitsPerJob
-  config.Data.splitting = task.splitting
-  config.Data.lumiMask = task.lumiMask
+  config.JobType.pyCfgParams = task.getParams()
+  config.Data.unitsPerJob = task.getUnitsPerJob()
+  config.Data.splitting = task.getSplitting()
+  config.Data.lumiMask = task.getLumiMask()
   config.General.requestName = task.requestName()
   config.Data.inputDataset = task.inputDataset
 
+  crabCommand('submit', config=config, dryrun=task.dryrun)
+
+if __name__ == "__main__":
   try:
-    print ("Splitting: {} with {} units per job".format(task.splitting, task.unitsPerJob))
-    crabCommand('submit', config=config, dryrun=task.dryrun)
+    workArea = sys.argv[1]
+    task = Task.Load(workArea=workArea)
+    submit(task)
   except:
     print(traceback.format_exc())
     sys.exit(1)
-  # except HTTPException as hte:
-  #   print(str(hte))
-  #   print("\n{}\nERROR: failed to submit task due to HTTPException.\n{}".format(hte, hte.headers))
-  #   sys.exit(1)
-  # except ClientException as cle:
-  #   print("ERROR: failed to submit task due to ClientException.\n{}".format(cle))
-  #   sys.exit(2)
-  # except RuntimeError as err:
-  #   print ("ERROR:", str(err), file=sys.stderr)
-  #   sys.exit(3)
-
-if __name__ == "__main__":
-  workArea = sys.argv[1]
-  task = Task.Load(workArea=workArea)
-  submit(task)

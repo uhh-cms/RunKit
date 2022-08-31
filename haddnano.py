@@ -32,7 +32,7 @@ def zeroFill(tree, brName, brObj, allowNonBool=False):
 fileHandles = []
 goFast = True
 for fn in files:
-    print("Adding file" + str(fn))
+    print("Adding file " + str(fn))
     fileHandles.append(ROOT.TFile.Open(fn))
     if fileHandles[-1].GetCompressionSettings() != fileHandles[0].GetCompressionSettings():
         goFast = False
@@ -40,6 +40,9 @@ for fn in files:
 of = ROOT.TFile(ofname, "recreate")
 if goFast:
     of.SetCompressionSettings(fileHandles[0].GetCompressionSettings())
+else:
+    of.SetCompressionAlgorithm(ROOT.kLZMA)
+    of.SetCompressionLevel(9)
 of.cd()
 
 for e in fileHandles[0].GetListOfKeys():
@@ -61,7 +64,10 @@ for e in fileHandles[0].GetListOfKeys():
                                  for x in otherObj.GetListOfBranches()])
             missingBranches = list(branchNames - otherBranches)
             additionalBranches = list(otherBranches - branchNames)
-            print("missing: " + str(missingBranches) + "\n Additional:" + str(additionalBranches))
+            if len(missingBranches) > 0:
+                print(fh.GetName() + " missing branches: " + str(missingBranches))
+            if len(additionalBranches) > 0:
+                print(fh.GetName() + " additional branches: " + str(additionalBranches))
             for br in missingBranches:
                 # fill "Other"
                 zeroFill(otherObj, br, obj.GetListOfBranches().FindObject(br))
@@ -76,7 +82,11 @@ for e in fileHandles[0].GetListOfKeys():
                                  for x in otherObj.GetListOfBranches()])
             missingBranches = list(branchNames - otherBranches)
             additionalBranches = list(otherBranches - branchNames)
-            print("missing: " + str(missingBranches) + "\n Additional:" + str(additionalBranches))
+            if len(missingBranches) > 0:
+                print(fh.GetName() + " missing branches: " + str(missingBranches))
+            if len(additionalBranches) > 0:
+                print(fh.GetName() + " additional branches: " + str(additionalBranches))
+
             for br in missingBranches:
                 # fill "Other"
                 zeroFill(otherObj, br, obj.GetListOfBranches(

@@ -5,7 +5,7 @@ import sys
 import traceback
 import yaml
 
-from sh_tools import sh_call, ShCallError, xrd_copy
+from sh_tools import sh_call, ShCallError, copy_remote_file
 
 _error_msg_fmt = '''
 <FrameworkError ExitStatus="{}" Type="Fatal error" >
@@ -91,6 +91,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
 
     input_remote_files = list(p.source.fileNames)
     success = False
+    try_again = False
     exception = None
     try:
       cmd = [ c for c in cmd_base ]
@@ -99,10 +100,10 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
       success = True
     except ShCallError as e:
       exception = e
-      print("cmsRun has failed.")
-      pass
+      print(f"cmsRun has failed with exit code = {e.return_code}")
+      try_again = e.return_code in [ 65, 84, 85, 92, 8019, 8020, 8021, 8022, 8023, 8028 ]
 
-    if not success:
+    if not success and try_again:
       input_files = [ ]
       has_remote_files = False
       for n, remote_file in enumerate(input_remote_files):
@@ -115,7 +116,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
             print("Copying remote files locally...")
             has_remote_files = True
           local_file = f'inputMiniAOD_{n}.root'
-          xrd_copy(remote_file, local_file, silent=False)
+          copy_remote_file(remote_file, local_file, silent=False)
           input_files.append(f'file:{local_file}')
           files_to_remove.append(local_file)
 

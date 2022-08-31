@@ -6,22 +6,34 @@ class Status(Enum):
   Unknown = -1
   Defined = 0
   Submitted = 1
-  Bootstrapped = 3
-  InProgress = 4
-  Finished = 5
+  Bootstrapped = 2
+  InProgress = 3
+  WaitingForRecovery = 4
+  WaitingForLocalRecovery = 5
+  CrabFinished = 6
+  PostProcessingFinished = 7
+  Failed = 8
 
 class StatusOnServer(Enum):
   SUBMITTED = 1
+  KILLED = 2
+  SUBMITFAILED = 3
 
 class StatusOnScheduler(Enum):
   SUBMITTED = 1
   FAILED = 2
+  FAILED_KILLED = 3
+  COMPLETED = 4
 
 class CrabWarningCategory(Enum):
   Unknown = 0
   BlocksSkipped = 1
   ShortRuntime = 2
   LowCpuEfficiency = 3
+
+class CrabFailureCategory(Enum):
+  Unknown = 0
+  CannotLocateFile = 1
 
 class JobStatus(Enum):
   unsubmitted = 0
@@ -43,6 +55,19 @@ class CrabWarning:
     self.message = warning_message
     for known_warning, category in CrabWarning.known_warnings.items():
       if re.match(known_warning, warning_message):
+        self.category = category
+        break
+
+class CrabFailure:
+  known_messages = {
+    r"CRAB server could not get file locations from Rucio\.": CrabFailureCategory.CannotLocateFile,
+  }
+
+  def __init__(self, message):
+    self.category = CrabFailureCategory.Unknown
+    self.message = message
+    for known_message, category in CrabFailure.known_messages.items():
+      if re.match(known_message, known_message):
         self.category = category
         break
 
@@ -76,6 +101,12 @@ class LogEntryParser:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
       if task_status.status_on_server == StatusOnServer.SUBMITTED:
         task_status.status = Status.InProgress
+      if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
+        task_status.status = Status.WaitingForRecovery
+      if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
+        task_status.status = Status.CrabFinished
+      if task_status.status_on_server == StatusOnServer.SUBMITFAILED:
+        task_status.status = Status.WaitingForRecovery
     except RuntimeError as e:
       task_status.status = Status.Unknown
       task_status.parse_error = str(e)
@@ -96,9 +127,12 @@ class LogEntryParser:
     return n + 1
 
   def status_on_scheduler(task_status, log_lines, n, value):
-    if value not in StatusOnScheduler.__members__:
-      raise RuntimeError(f'Unknown status on the scheduler = "{value}"')
-    task_status.status_on_scheduler = StatusOnScheduler[value]
+    if value == 'FAILED (KILLED)':
+      task_status.status_on_scheduler = StatusOnScheduler.FAILED_KILLED
+    else:
+      if value not in StatusOnScheduler.__members__:
+        raise RuntimeError(f'Unknown status on the scheduler = "{value}"')
+      task_status.status_on_scheduler = StatusOnScheduler[value]
     return n + 1
 
   def warning(task_status, log_lines, n, value):
@@ -110,6 +144,17 @@ class LogEntryParser:
         break
       warning_text += f'\n{log_lines[n].strip()}'
     task_status.warnings.append(CrabWarning(warning_text))
+    return n
+
+  def failure(task_status, log_lines, n, value):
+    text = value
+    while n < len(log_lines) - 1:
+      n += 1
+      line = log_lines[n].strip()
+      if len(line) == 0 or log_lines[n][0] != ' ':
+        break
+      text += f'\n{log_lines[n].strip()}'
+    task_status.failure = CrabFailure(text)
     return n
 
   def job_status(task_status, log_lines, n, value):
@@ -225,6 +270,10 @@ class LogEntryParser:
     task_status.status = Status.Bootstrapped
     return n + 2
 
+  def details(task_status, log_entries, n, value):
+    task_status.details = json.loads(log_entries[n])
+    return n + 1
+
   _parser_dict = {
     "CRAB project directory:": "project_dir",
     "Task name:": "task_name",
@@ -240,6 +289,8 @@ class LogEntryParser:
     "Log file is": "crab_log_file",
     "Summary of run jobs:": run_summary,
     "Task bootstrapped": task_boostrapped,
+    "Failure message from server:": failure,
+    "{": details,
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
@@ -259,16 +310,38 @@ class CrabTaskStatus:
     self.dashboard_url = None
     self.status_on_scheduler = None
     self.warnings = []
+    self.failure = None
     self.n_jobs_total = None
     self.job_stat = {}
     self.error_stat = {}
     self.crab_log_file = None
     self.run_stat = {}
+    self.details = {}
 
   _string_fields = [ 'log_lines', 'parse_error', 'project_dir', 'task_name', 'grid_scheduler', 'task_worker',
                      'task_url', 'dashboard_url', 'crab_log_file' ]
   _enum_fields = [ 'status', 'status_on_server', 'status_on_scheduler' ]
   _int_fields = [ 'n_jobs_total' ]
+
+  def get_detailed_job_stat(self, field_name, job_status):
+    jobs = {}
+    for job_id, job_stat in self.details.items():
+      status = JobStatus[job_stat["State"]]
+      if status != job_status: continue
+      if field_name not in job_stat:
+        raise RuntimeError(f'Job field "{field_name}" not found.')
+      jobs[job_id] = job_stat[field_name]
+    return jobs
+
+  def get_job_status(self):
+    jobs = {}
+    for job_id, job_stat in self.details.items():
+      status = JobStatus[job_stat["State"]]
+      jobs[job_id] = status
+    return jobs
+
+  def task_id(self):
+    return self.task_name.split(':')[0]
 
   def to_json(self):
     result = { }
@@ -287,6 +360,9 @@ class CrabTaskStatus:
         warnings.append({ 'category': warning.category.name, 'message': warning.message })
       result['warnings'] = warnings
 
+    if self.failure is not None:
+      result['failure'] = { 'category': self.failure.category.name, 'message': self.failure.message }
+
     if len(self.job_stat) > 0:
       result['job_stat'] = { key.name: value for key,value in self.job_stat.items() }
 
@@ -295,6 +371,9 @@ class CrabTaskStatus:
 
     if len(self.run_stat) > 0:
       result['run_stat'] = self.run_stat
+
+    if len(self.details) > 0:
+      result['details'] = self.details
 
     return json.dumps(result, indent=2)
 
@@ -316,6 +395,9 @@ class CrabTaskStatus:
     for warning in result.get('warnings', []):
       task_status.warnings.append(CrabWarning(warning['message']))
 
+    if 'failure' in result:
+      task_status.failure = CrabFailure(result['failure']['message'])
+
     for name, stat in result.get('job_stat', {}).items():
       task_status.job_stat[JobStatus[name]] = stat
 
@@ -323,6 +405,8 @@ class CrabTaskStatus:
       task_status.error_stat = result['error_stat']
     if 'run_stat' in result:
       task_status.run_stat = result['run_stat']
+    if 'details' in result:
+      task_status.details = result['details']
 
     return task_status
 
