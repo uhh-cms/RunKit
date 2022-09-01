@@ -119,17 +119,17 @@ class Task:
       return max(self.maxMemory, 4000)
     return self.maxMemory
 
-  def getLocalJobArea(self):
-    localArea = os.path.join(self.crabArea(), 'local')
+  def getLocalJobArea(self, recoveryIndex=None):
+    localArea = os.path.join(self.crabArea(recoveryIndex), 'local')
     if not os.path.exists(localArea):
       print(f'{self.name}: Preparing local job area ...')
-      sh_call(['crab', 'preparelocal', '-d', self.crabArea(), f'--destdir={localArea}'], catch_stdout=True)
+      sh_call(['crab', 'preparelocal', '-d', self.crabArea(recoveryIndex), f'--destdir={localArea}'], catch_stdout=True)
     if not os.path.exists(localArea):
       raise RuntimeError(f'{self.name}: unable to prepare local job area')
     return localArea
 
-  def getJobInputFilesTxtPath(self):
-    localJobArea = self.getLocalJobArea()
+  def getJobInputFilesTxtPath(self, recoveryIndex=None):
+    localJobArea = self.getLocalJobArea(recoveryIndex)
     inputFilesPath = os.path.join(localJobArea, 'job_input_files')
     if not os.path.exists(inputFilesPath):
       os.mkdir(inputFilesPath)
@@ -138,25 +138,30 @@ class Task:
       sh_call(['tar', 'xf', inputFilesTar, '-C', inputFilesPath], catch_stdout=True, catch_stderr=True)
     return inputFilesPath
 
-  def getJobInputFiles(self):
-    if self.jobInputFiles is None:
-      jsonPath = os.path.join(self.crabArea(), 'job_input_files.json')
-      if not os.path.exists(jsonPath):
-        txtPath = self.getJobInputFilesTxtPath()
-        self.jobInputFiles = {}
-        for fileName in os.listdir(txtPath):
-          jobIdMatch = re.match(r'^job_input_file_list_(.*)\.txt$', fileName)
-          if jobIdMatch is None:
-            raise RuntimeError(f'Unable to extract job id from "{jobIdMatch}"')
-          jobId = jobIdMatch.group(1)
-          with open(os.path.join(txtPath, fileName), 'r') as f:
-            self.jobInputFiles[jobId] = json.load(f)
-        with open(jsonPath, 'w') as f:
-          json.dump(self.jobInputFiles, f, indent=2)
-      else:
-        with open(jsonPath, 'r') as f:
-          self.jobInputFiles = json.load(f)
-    return self.jobInputFiles
+  def getJobInputFiles(self, recoveryIndex=None):
+    if recoveryIndex is None:
+      recoveryIndex = self.recoveryIndex
+    if recoveryIndex == self.recoveryIndex and self.jobInputFiles is not None:
+      return self.jobInputFiles
+    jsonPath = os.path.join(self.crabArea(recoveryIndex), 'job_input_files.json')
+    if not os.path.exists(jsonPath):
+      txtPath = self.getJobInputFilesTxtPath(recoveryIndex)
+      jobInputFiles = {}
+      for fileName in os.listdir(txtPath):
+        jobIdMatch = re.match(r'^job_input_file_list_(.*)\.txt$', fileName)
+        if jobIdMatch is None:
+          raise RuntimeError(f'Unable to extract job id from "{jobIdMatch}"')
+        jobId = jobIdMatch.group(1)
+        with open(os.path.join(txtPath, fileName), 'r') as f:
+          jobInputFiles[jobId] = json.load(f)
+      with open(jsonPath, 'w') as f:
+        json.dump(jobInputFiles, f, indent=2)
+    else:
+      with open(jsonPath, 'r') as f:
+        jobInputFiles = json.load(f)
+    if recoveryIndex == self.recoveryIndex:
+      self.jobInputFiles = jobInputFiles
+    return jobInputFiles
 
   def getFileRunLumi(self):
     if self.fileRunLumi is None:
@@ -233,12 +238,21 @@ class Task:
         lumiMask[str(run)].append([lumi, lumi])
     return lumiMask
 
-  def getRepresentativeLumiMaskForNonFinishedJobs(self):
+  def getNotFinishedJobIds(self, recoveryIndex=None):
     jobIds = []
-    for jobId, status in self.taskStatus.get_job_status().items():
+    for jobId, status in self.getTaskStatus(recoveryIndex).get_job_status().items():
       if status != JobStatus.finished:
         jobIds.append(jobId)
-    return self.getRepresentativeLumiMask(jobIds)
+    return jobIds
+
+  def getTaskStatus(self, recoveryIndex=None):
+    if recoveryIndex is None:
+      recoveryIndex = self.recoveryIndex
+    if recoveryIndex == self.recoveryIndex:
+      return self.taskStatus
+    statusPath = os.path.join(self.workArea, f'status_{recoveryIndex}.json')
+    with open(statusPath, 'r') as f:
+      return CrabTaskStatus.from_json(f.read())
 
   def getTaskId(self, recoveryIndex=None):
     if recoveryIndex is None:
@@ -287,8 +301,8 @@ class Task:
   def hasFailedJobs(self):
     return JobStatus.failed in self.taskStatus.job_stat
 
-  def crabArea(self):
-    return os.path.join(self.workArea, 'crab_' + self.requestName())
+  def crabArea(self, recoveryIndex=None):
+    return os.path.join(self.workArea, 'crab_' + self.requestName(recoveryIndex))
 
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
@@ -340,8 +354,11 @@ class Task:
 
   def recover(self):
     if self.recoveryIndex < self.maxRecoveryCount:
-      print(f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount} ...')
-      lumiMask = self.getRepresentativeLumiMaskForNonFinishedJobs()
+      jobIds = self.getNotFinishedJobIds()
+      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}. '
+      msg += 'Unfinished job ids: ' + ', '.join(jobIds)
+      print(msg)
+      lumiMask = self.getRepresentativeLumiMask(jobIds)
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
       with open(self.getLumiMask(), 'w') as f:
@@ -363,6 +380,38 @@ class Task:
     self.taskStatus.status = Status.Failed
     self.saveStatus()
     return False
+
+  def kill(self):
+    sh_call(['crab', 'kill', '-d', self.crabArea()])
+
+  def checkCompleteness(self):
+    def file_set(d):
+      all_files = set()
+      for key, files in d.items():
+        for file in files:
+          if file in all_files:
+            raise RuntimeError(f'Duplicated file entry "{file}"')
+          all_files.add(file)
+      return all_files
+
+    for recoveryIndex in range(self.recoveryIndex):
+      jobIds = self.getNotFinishedJobIds(recoveryIndex)
+      jobFilesDict = { job : files for job,files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+      nextJobFilesDict = self.getJobInputFiles(recoveryIndex + 1)
+      jobFiles = file_set(jobFilesDict)
+      nextJobFiles = file_set(nextJobFilesDict)
+      if jobFiles != nextJobFiles:
+        print(f'{self.name}: Incomplete transition between iteration {recoveryIndex} and {recoveryIndex+1}')
+        print(f'Files not processed in iteration {recoveryIndex}: {jobFilesDict}')
+        print(f'Input files for iteration {recoveryIndex+1}: {nextJobFilesDict}')
+        delta_a = jobFiles - nextJobFiles
+        delta_b = nextJobFiles - jobFiles
+        if len(delta_a):
+          print(f'Missing files: {delta_a}')
+        if len(delta_b):
+          print(f'Unexpected files: {delta_b}')
+        return False
+    return True
 
   def updateConfig(self, mainCfg, taskCfg):
     for pName in Task._taskCfgProperties:
@@ -425,5 +474,7 @@ if __name__ == "__main__":
   workArea = sys.argv[1]
   task = Task.Load(workArea=workArea)
 
-  # print(task.getRepresentativeLumiMaskForNonFinishedJobs())
-  print(task.getAllOutputPaths())
+  ok = "OK" if task.checkCompleteness() else "INCOMPLETE"
+  print(f'{task.name}: {ok}')
+  #print(task.getRepresentativeLumiMaskForNonFinishedJobs())
+  # print(task.getAllOutputPaths())

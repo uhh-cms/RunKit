@@ -153,7 +153,7 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, verbose=0):
 def copy_remote_file(input_remote_file, output_local_file, silent=False):
   verbose = 0 if silent else 1
   pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, verbose=verbose)
-  if len(pfns_list):
+  if len(pfns_list) == 0:
     raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
   for pfns in pfns_list:
     try:

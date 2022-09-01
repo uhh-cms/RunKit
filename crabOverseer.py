@@ -11,13 +11,15 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .crabTaskStatus import Status, StatusOnServer
+from .crabTaskStatus import JobStatus, Status, StatusOnServer
 from .crabTask import Task
 from .sh_tools import sh_call
 
 class TaskStat:
+  summary_only_thr = 10
+
   def __init__(self):
-    self.n_tasks = 0
+    self.all_tasks = []
     self.tasks_by_status = {}
     self.n_jobs = 0
     self.total_job_stat = {}
@@ -27,7 +29,7 @@ class TaskStat:
     self.failed = []
 
   def add(self, task):
-    self.n_tasks += 1
+    self.all_tasks.append(task)
     if task.taskStatus.status not in self.tasks_by_status:
       self.tasks_by_status[task.taskStatus.status] = []
     self.tasks_by_status[task.taskStatus.status].append(task)
@@ -49,16 +51,29 @@ class TaskStat:
 
   def report(self):
     status_list = sorted(self.tasks_by_status.keys(), key=lambda x: x.value)
-    status_list = [ f"{self.n_tasks} Total" ] + [ f"{len(self.tasks_by_status[x])} {x.name}" for x in status_list ]
+    n_tasks = len(self.all_tasks)
+    status_list = [ f"{n_tasks} Total" ] + [ f"{len(self.tasks_by_status[x])} {x.name}" for x in status_list ]
     print('Tasks: ' + ', '.join(status_list))
-    job_stat = [ f"{self.n_jobs} total" ] + \
-               [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
-    if self.n_jobs > 0:
-      print('Jobs in active tasks: ' + ', '.join(job_stat))
-    if(len(self.max_job_stat.items())):
-      print('Task with ...')
-      for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
-        print(f'\tmax {job_status.name} jobs = {cnt}: {task.name} {task.taskStatus.dashboard_url}')
+    if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
+      job_stat = [ f"{self.n_jobs} total" ] + \
+                [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
+      if self.n_jobs > 0:
+        print('Jobs in active tasks: ' + ', '.join(job_stat))
+      if(len(self.max_job_stat.items())):
+        print('Task with ...')
+        for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
+          print(f'\tmax {job_status.name} jobs = {cnt}: {task.name} {task.taskStatus.dashboard_url}')
+    else:
+      for task in self.tasks_by_status[Status.InProgress]:
+        text = f'{task.name}: status={task.taskStatus.status.name}. '
+        job_info = []
+        for job_status, count in sorted(task.taskStatus.job_stat.items(), key=lambda x: x[0].value):
+          job_info.append(f'{count} {job_status.name}')
+        if len(job_info) > 0:
+          text += ', '.join(job_info) + '. '
+        if task.taskStatus.dashboard_url is not None:
+          text += task.taskStatus.dashboard_url
+        print(text)
     if len(self.unknown) > 0:
       print('Tasks with unknown status:')
       for task in self.unknown:
@@ -74,6 +89,29 @@ def timestamp_str():
   t = datetime.datetime.now()
   t_str = t.strftime('%Y-%m-%d %H:%M:%S')
   return f'[{t_str}] '
+
+def sanity_checks(task):
+  if task.taskStatus.status == Status.InProgress:
+    job_states = sorted(task.taskStatus.job_stat.keys(), key=lambda x: x.value)
+    ref_states = [ JobStatus.running, JobStatus.finished, JobStatus.failed ]
+    if len(job_states) <= len(ref_states) and job_states == ref_states[:len(job_states)]:
+      now = datetime.datetime.now()
+      start_times = task.taskStatus.get_detailed_job_stat('StartTimes', JobStatus.running)
+      abnormal_run_thr = 24
+      job_runs = []
+      for job_id, start_time in start_times.items():
+        t = datetime.datetime.fromtimestamp(start_time[-1])
+        delta_t = (now - t).total_seconds() / (60 * 60)
+        job_runs.append([job_id, delta_t])
+      job_runs = sorted(job_runs, key=lambda x: x[1])
+      max_run = job_runs[0][1]
+      if max_run > abnormal_run_thr:
+        text = f'{task.name}: all running jobs are running for at least {max_run:.1f} hours.' \
+              + ' It is very likely that these jobs are stacked. Task will be killed following by recovery attempts.'
+        print(text)
+        task.kill()
+        return False
+  return True
 
 def update(tasks, no_status_update=False):
   print(timestamp_str() + "Updating...")
@@ -93,8 +131,13 @@ def update(tasks, no_status_update=False):
       else:
         if task.hasFailedJobs():
           task.resubmit()
+    sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
-      to_post_process.append(task)
+      if task.checkCompleteness():
+        to_post_process.append(task)
+      else:
+        task.taskStatus.status = Status.Failed
+        task.saveStatus()
     stat.add(task)
   stat.report()
   return to_post_process
