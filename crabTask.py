@@ -230,6 +230,8 @@ class Task:
     lumiMask = {}
     repRunLumi = self.getFileRepresentativeRunLumi()
     for file in files:
+      if file not in repRunLumi:
+        raise RuntimeError(f'{self.name}: cannot find representative run-lumi for "{file}"')
       run, lumi = repRunLumi[file]
       if run not in lumiMask:
         lumiMask[str(run)] = []
@@ -360,7 +362,7 @@ class Task:
       msg += ' Unfinished job ids: ' + ', '.join(jobIds) + '.'
       msg += ' Files to process: ' + ', '.join(filesToProcess)
       print(msg)
-      lumiMask = self.getRepresentativeLumiMask(jobIds)
+      lumiMask = self.getRepresentativeLumiMask(filesToProcess)
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
       with open(self.getLumiMask(), 'w') as f:
@@ -386,17 +388,22 @@ class Task:
   def kill(self):
     sh_call(['crab', 'kill', '-d', self.crabArea()])
 
-  def getFilesToProcess(self):
+  def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):
     allFiles = self.getFileRunLumi().keys()
     processedFiles = set()
-    for recoveryIndex in range(self.recoveryIndex + 1):
-      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
-      jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+    if lastRecoveryIndex is None:
+      lastRecoveryIndex = self.recoveryIndex
+    for recoveryIndex in range(lastRecoveryIndex + 1):
+      if recoveryIndex != self.recoveryIndex or includeNotFinishedFromLastIteration:
+        jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
+        jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+      else:
+        jobFilesDict = self.getJobInputFiles(recoveryIndex)
       for key, files in jobFilesDict.items():
         processedFiles.update(files)
     return list(allFiles - processedFiles)
 
-  def checkCompleteness(self):
+  def checkCompleteness(self, includeNotFinishedFromLastIteration=True):
     def file_set(d):
       all_files = set()
       for key, files in d.items():
@@ -406,28 +413,29 @@ class Task:
           all_files.add(file)
       return all_files
 
-    filesToProcess = self.getFilesToProcess()
+    filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration)
     if len(filesToProcess):
       print(f'{self.name}: task in not complete. The following files still needs to be processed: {filesToProcess}')
       return False
 
-    for recoveryIndex in range(self.recoveryIndex):
-      jobIds = self.selectJobIds(JobStatus.finished, invert=True, recoveryIndex=recoveryIndex)
-      jobFilesDict = { job : files for job,files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
-      nextJobFilesDict = self.getJobInputFiles(recoveryIndex + 1)
-      jobFiles = file_set(jobFilesDict)
-      nextJobFiles = file_set(nextJobFilesDict)
-      #delta_a = jobFiles - nextJobFiles
-      # if len(delta_a):
-      #   print(f'Missing files: {delta_a}')
+    processedFiles = set()
 
-      delta_b = nextJobFiles - jobFiles
-      if len(delta_b):
-        print(f'{self.name}: Incomplete transition between iteration {recoveryIndex} and {recoveryIndex+1}')
-        print(f'Files not processed in iteration {recoveryIndex}: {jobFilesDict}')
-        print(f'Input files for iteration {recoveryIndex+1}: {nextJobFilesDict}')
-        print(f'Unexpected files: {delta_b}')
+    for recoveryIndex in range(self.recoveryIndex + 1):
+      jobFilesDict = self.getJobInputFiles(recoveryIndex)
+      jobFiles = file_set(jobFilesDict)
+
+      print(f'n files for {recoveryIndex} = {len(jobFiles)}, n_proc = {len(processedFiles)}')
+      intersection = processedFiles.intersection(jobFiles)
+      if len(intersection):
+        print(f'{self.name}: Duplicated files for iteration {recoveryIndex}')
+        print(f'Input files for iteration {recoveryIndex}: {jobFilesDict}')
+        print(f'Files that have been already processed: {intersection}')
         return False
+
+      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
+      jobFilesDict = { job : files for job,files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+      jobFiles = file_set(jobFilesDict)
+      processedFiles.update(jobFilesDict)
     return True
 
   def updateConfig(self, mainCfg, taskCfg):
@@ -491,6 +499,11 @@ if __name__ == "__main__":
   workArea = sys.argv[1]
   task = Task.Load(workArea=workArea)
 
-  ok = "OK" if task.checkCompleteness() else "INCOMPLETE"
-  print(f'{task.name}: {ok}')
+  #ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
+  #print(f'{task.name}: {ok}')
   # print(task.getAllOutputPaths())
+  filesToProcess = task.getFilesToProcess(lastRecoveryIndex=2)
+  print(f'{task.name}: {len(filesToProcess)} {filesToProcess}')
+  lumiMask = task.getRepresentativeLumiMask(filesToProcess)
+  n_lumi = sum([ len(x) for _, x in lumiMask.items()])
+  print(f'{task.name}: {n_lumi} {lumiMask}')
