@@ -226,22 +226,20 @@ class Task:
         self.fileRepresentativeRunLumi[file] = findFirstRepresentative()
     return self.fileRepresentativeRunLumi
 
-  def getRepresentativeLumiMask(self, jobIds):
+  def getRepresentativeLumiMask(self, files):
     lumiMask = {}
-    jobInputFiles = self.getJobInputFiles()
     repRunLumi = self.getFileRepresentativeRunLumi()
-    for jobId in jobIds:
-      for file in jobInputFiles[jobId]:
-        run, lumi = repRunLumi[file]
-        if run not in lumiMask:
-          lumiMask[str(run)] = []
-        lumiMask[str(run)].append([lumi, lumi])
+    for file in files:
+      run, lumi = repRunLumi[file]
+      if run not in lumiMask:
+        lumiMask[str(run)] = []
+      lumiMask[str(run)].append([lumi, lumi])
     return lumiMask
 
-  def getNotFinishedJobIds(self, recoveryIndex=None):
+  def selectJobIds(self, jobStatus, invert=False, recoveryIndex=None):
     jobIds = []
     for jobId, status in self.getTaskStatus(recoveryIndex).get_job_status().items():
-      if status != JobStatus.finished:
+      if (status == jobStatus and not invert) or (status != jobStatus and invert):
         jobIds.append(jobId)
     return jobIds
 
@@ -332,6 +330,8 @@ class Task:
 
   def resubmit(self):
     retries = self.taskStatus.get_detailed_job_stat('Retries', JobStatus.failed)
+    if len(retries) == 0:
+      return False
     min_retries = min(retries.items(), key=lambda x: x[1])
     max_retries = max(retries.items(), key=lambda x: x[1])
     self.resubmitCount = min_retries[1]
@@ -354,9 +354,11 @@ class Task:
 
   def recover(self):
     if self.recoveryIndex < self.maxRecoveryCount:
-      jobIds = self.getNotFinishedJobIds()
-      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}. '
-      msg += 'Unfinished job ids: ' + ', '.join(jobIds)
+      filesToProcess = self.getFilesToProcess()
+      jobIds = self.selectJobIds(JobStatus.finished, invert=True)
+      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
+      msg += ' Unfinished job ids: ' + ', '.join(jobIds) + '.'
+      msg += ' Files to process: ' + ', '.join(filesToProcess)
       print(msg)
       lumiMask = self.getRepresentativeLumiMask(jobIds)
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
@@ -384,6 +386,16 @@ class Task:
   def kill(self):
     sh_call(['crab', 'kill', '-d', self.crabArea()])
 
+  def getFilesToProcess(self):
+    allFiles = self.getFileRunLumi().keys()
+    processedFiles = set()
+    for recoveryIndex in range(self.recoveryIndex + 1):
+      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
+      jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+      for key, files in jobFilesDict.items():
+        processedFiles.update(files)
+    return list(allFiles - processedFiles)
+
   def checkCompleteness(self):
     def file_set(d):
       all_files = set()
@@ -394,22 +406,27 @@ class Task:
           all_files.add(file)
       return all_files
 
+    filesToProcess = self.getFilesToProcess()
+    if len(filesToProcess):
+      print(f'{self.name}: task in not complete. The following files still needs to be processed: {filesToProcess}')
+      return False
+
     for recoveryIndex in range(self.recoveryIndex):
-      jobIds = self.getNotFinishedJobIds(recoveryIndex)
+      jobIds = self.selectJobIds(JobStatus.finished, invert=True, recoveryIndex=recoveryIndex)
       jobFilesDict = { job : files for job,files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
       nextJobFilesDict = self.getJobInputFiles(recoveryIndex + 1)
       jobFiles = file_set(jobFilesDict)
       nextJobFiles = file_set(nextJobFilesDict)
-      if jobFiles != nextJobFiles:
+      #delta_a = jobFiles - nextJobFiles
+      # if len(delta_a):
+      #   print(f'Missing files: {delta_a}')
+
+      delta_b = nextJobFiles - jobFiles
+      if len(delta_b):
         print(f'{self.name}: Incomplete transition between iteration {recoveryIndex} and {recoveryIndex+1}')
         print(f'Files not processed in iteration {recoveryIndex}: {jobFilesDict}')
         print(f'Input files for iteration {recoveryIndex+1}: {nextJobFilesDict}')
-        delta_a = jobFiles - nextJobFiles
-        delta_b = nextJobFiles - jobFiles
-        if len(delta_a):
-          print(f'Missing files: {delta_a}')
-        if len(delta_b):
-          print(f'Unexpected files: {delta_b}')
+        print(f'Unexpected files: {delta_b}')
         return False
     return True
 
@@ -476,5 +493,4 @@ if __name__ == "__main__":
 
   ok = "OK" if task.checkCompleteness() else "INCOMPLETE"
   print(f'{task.name}: {ok}')
-  #print(task.getRepresentativeLumiMaskForNonFinishedJobs())
   # print(task.getAllOutputPaths())
