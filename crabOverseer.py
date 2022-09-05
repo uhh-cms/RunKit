@@ -54,11 +54,12 @@ class TaskStat:
     n_tasks = len(self.all_tasks)
     status_list = [ f"{n_tasks} Total" ] + [ f"{len(self.tasks_by_status[x])} {x.name}" for x in status_list ]
     print('Tasks: ' + ', '.join(status_list))
+    job_stat = [ f"{self.n_jobs} total" ] + \
+               [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
+    if self.n_jobs > 0:
+      print('Jobs in active tasks: ' + ', '.join(job_stat))
+
     if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
-      job_stat = [ f"{self.n_jobs} total" ] + \
-                [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
-      if self.n_jobs > 0:
-        print('Jobs in active tasks: ' + ', '.join(job_stat))
       if(len(self.max_job_stat.items())):
         print('Task with ...')
         for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
@@ -134,6 +135,7 @@ def update(tasks, no_status_update=False):
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
+        task.preparePostProcessLists()
         to_post_process.append(task)
       else:
         task.taskStatus.status = Status.Failed

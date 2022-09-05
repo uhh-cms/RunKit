@@ -268,33 +268,75 @@ class Task:
       self.saveCfg()
     return self.taskIds[recoveryIndex]
 
-  def getAllOutputPaths(self):
-    outputs = []
+  def getTaskOutputPath(self, recoveryIndex=None):
+    if recoveryIndex is None:
+      recoveryIndex = self.recoveryIndex
     datasetParts = [ s for s in self.inputDataset.split('/') if len(s) > 0 ]
     datasetName = datasetParts[0]
-    output_base = os.path.join(self.localOutputPrefix + self.crabOutput, datasetName)
-    for idx in range(self.recoveryIndex + 1):
-      output = os.path.join(output_base, 'crab_' + self.requestName(idx), self.getTaskId(idx))
-      if os.path.exists(output):
-        outputs.append(output)
-      else:
-        print(f'{self.name}: empty output "{output}".')
-    return outputs
+    outputBase = os.path.join(self.localOutputPrefix + self.crabOutput, datasetName)
+    return os.path.join(outputBase, 'crab_' + self.requestName(recoveryIndex=recoveryIndex),
+                        self.getTaskId(recoveryIndex=recoveryIndex))
+
+  def findOutputFile(self, taskOutput, jobId, outputIndex):
+    outputName, outputExt = os.path.splitext(self.outputFiles[outputIndex])
+    fileName = f'{outputName}_{jobId}{outputExt}'
+    outputFiles = []
+    for root, dirs, files in os.walk(taskOutput):
+      for file in files:
+        if file == fileName:
+          filePath = os.path.join(root, file)
+          outputFiles.append(filePath)
+    if len(outputFiles) == 0:
+      raise RuntimeError(f'{self.name}: unable to find output for jobId={jobId} outputName={outputName}' + \
+                         f' in {taskOutput}')
+    if len(outputFiles) > 1:
+      raise RuntimeError(f'{self.name}: duplicated outputs for jobId={jobId} outputName={outputName}' + \
+                         f' in {taskOutput}: ' + ' '.join(outputFiles))
+    return outputFiles[0]
+
+  def getPostProcessList(self, outputIndex):
+    outputFile = self.outputFiles[outputIndex]
+    outputName = os.path.splitext(outputFile)[0]
+    return os.path.join(self.workArea, f'postProcessList_{outputName}.txt')
+
+  def preparePostProcessList(self, outputIndex):
+    allFiles = self.getFileRunLumi().keys()
+    processedFiles = set()
+    outputFiles = []
+    for recoveryIndex in range(self.recoveryIndex + 1):
+      taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
+      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
+      jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+      for jobId, files in jobFilesDict.items():
+        if len(processedFiles.intersection(files)) == 0:
+          outputFile = self.findOutputFile(taskOutput, jobId, outputIndex)
+          outputFiles.append(outputFile)
+          processedFiles.update(files)
+    missingFiles = list(allFiles - processedFiles)
+    if len(missingFiles) > 0:
+      raise RuntimeError(f'{self.name}: missing outputs for following input files: ' + ' '.join(missingFiles))
+    with open(self.getPostProcessList(outputIndex), 'w') as f:
+      for file in outputFiles:
+        f.write(file + '\n')
+
+  def preparePostProcessLists(self):
+    for outputIndex in range(len(self.outputFiles)):
+      self.preparePostProcessList(outputIndex)
 
   def getFinalOutput(self):
     return os.path.join(self.finalOutput, self.name)
 
   def postProcessOutputs(self):
     haddnanoEx_path = os.path.join(os.path.dirname(__file__), 'haddnanoEx.py')
-    cmd = [ 'python3', '-u', haddnanoEx_path, '--output', self.getFinalOutput(),
-            '--target-size', str(self.targetOutputFileSize) ]
-    outputs = self.getAllOutputPaths()
-    if len(outputs) == 0:
-      raise RuntimeError("No outputs were found")
-    cmd += outputs
-    _, output, _ = sh_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
-    with open(os.path.join(self.workArea, 'postProcessing.log'), 'w') as f:
-      f.write(output)
+    for outputIndex in range(len(self.outputFiles)):
+      outputName = self.outputFiles[outputIndex]
+      outputNameBase, outputExt = os.path.splitext(outputName)
+      cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', self.getFinalOutput(),
+              '--output-name', outputName, '--target-size', str(self.targetOutputFileSize),
+              '--file-list', self.getPostProcessList(outputIndex) ]
+      _, output, _ = sh_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
+      with open(os.path.join(self.workArea, f'postProcessing_{outputNameBase}.log'), 'w') as f:
+        f.write(output)
     self.taskStatus.status = Status.PostProcessingFinished
     self.saveStatus()
 
@@ -358,11 +400,15 @@ class Task:
     if self.recoveryIndex < self.maxRecoveryCount:
       filesToProcess = self.getFilesToProcess()
       jobIds = self.selectJobIds(JobStatus.finished, invert=True)
-      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
-      msg += ' Unfinished job ids: ' + ', '.join(jobIds) + '.'
-      msg += ' Files to process: ' + ', '.join(filesToProcess)
-      print(msg)
       lumiMask = self.getRepresentativeLumiMask(filesToProcess)
+      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
+      msg += '\nUnfinished job ids: ' + ', '.join(jobIds)
+      msg += '\nFiles to process: ' + ', '.join(filesToProcess)
+      msg += '\nRepresentative lumi mask: ' + json.dumps(lumiMask)
+      print(msg)
+      n_lumi = sum([ len(x) for _, x in lumiMask.items()])
+      if n_lumi != len(filesToProcess):
+        raise RuntimeError(f"{self.name}: number of representative lumi sections != number of files to process.")
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
       with open(self.getLumiMask(), 'w') as f:
@@ -502,7 +548,7 @@ if __name__ == "__main__":
   #ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
   #print(f'{task.name}: {ok}')
   # print(task.getAllOutputPaths())
-  filesToProcess = task.getFilesToProcess(lastRecoveryIndex=2)
+  filesToProcess = task.getFilesToProcess(lastRecoveryIndex=1)
   print(f'{task.name}: {len(filesToProcess)} {filesToProcess}')
   lumiMask = task.getRepresentativeLumiMask(filesToProcess)
   n_lumi = sum([ len(x) for _, x in lumiMask.items()])
