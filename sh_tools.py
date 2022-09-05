@@ -13,7 +13,7 @@ class ShCallError(RuntimeError):
     self.return_code = return_code
 
 def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
-            expected_return_codes=[0], verbose=0):
+            expected_return_codes=[0], env=None, verbose=0):
   cmd_str = []
   for s in cmd:
     if ' ' in s:
@@ -32,6 +32,8 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
       kwargs['stderr'] = subprocess.STDOUT
     else:
       kwargs['stderr'] = subprocess.PIPE
+  if env is not None:
+    kwargs['env'] = env
   proc = subprocess.Popen(cmd, **kwargs)
   if catch_stdout and print_output:
     output = b''
@@ -79,8 +81,23 @@ def adler32sum(file_name):
       asum = zlib.adler32(data, asum)
   return asum
 
+def check_download(local_file, expected_adler32sum=None, raise_exception=False, remote_file=None,
+                   remove_bad_file=False):
+  if expected_adler32sum is not None:
+    asum = adler32sum(local_file)
+    if asum != expected_adler32sum:
+      if remove_bad_file:
+        os.remove(local_file)
+      if raise_exception:
+        remote_name = remote_file if remote_file is not None else 'file'
+        raise RuntimeError(f'Unable to copy {remote_name} from remote. Failed adler32sum check.' + \
+                           f' {asum:x} != {expected_adler32sum:x}.')
+      return False
+  return True
+
+
 def xrd_copy(input_file_name, local_name, n_retries=4, n_retries_xrdcp=4, n_streams=1, retry_sleep_interval=10,
-             expected_adler32sum=None, silent=True,
+             expected_adler32sum=None, verbose=1,
              prefixes = [ 'root://cms-xrd-global.cern.ch/', 'root://xrootd-cms.infn.it/',
                           'root://cmsxrootd.fnal.gov/' ]):
   def try_download(prefix):
@@ -88,7 +105,7 @@ def xrd_copy(input_file_name, local_name, n_retries=4, n_retries_xrdcp=4, n_stre
       xrdcp_args = ['xrdcp', '--retry', str(n_retries_xrdcp), '--streams', str(n_streams) ]
       if os.path.exists(local_name):
         xrdcp_args.append('--continue')
-      if silent:
+      if verbose == 0:
         xrdcp_args.append('--silent')
       xrdcp_args.extend([f'{prefix}{input_file_name}', local_name])
       sh_call(xrdcp_args, verbose=1)
@@ -96,33 +113,29 @@ def xrd_copy(input_file_name, local_name, n_retries=4, n_retries_xrdcp=4, n_stre
     except ShCallError as e:
         return False
 
-  def check_download():
-    if expected_adler32sum is not None:
-      asum = adler32sum(local_name)
-      if asum != expected_adler32sum:
-        os.remove(local_name)
-        return False
-    return True
-
   if os.path.exists(local_name):
     os.remove(local_name)
 
   for n in range(n_retries):
     for prefix in prefixes:
-      if try_download(prefix) and check_download():
+      if try_download(prefix) and check_download(local_name, expected_adler32sum=expected_adler32sum,
+                                                 remove_bad_file=True):
         return
       time.sleep(retry_sleep_interval)
 
   raise RuntimeError(f'Unable to copy {input_file_name} from remote.')
 
 def webdav_copy(input_remote_file, output_local_file, voms_token, expected_adler32sum=None):
-  sh_call(['davix-get', input_remote_file, output_local_file, '-E', voms_token])
-  if expected_adler32sum is not None:
-    asum = adler32sum(output_local_file)
-    if asum != expected_adler32sum:
-      os.remove(output_local_file)
-      raise RuntimeError(f'Unable to copy {input_remote_file} from remote.')
+  sh_call(['davix-get', input_remote_file, output_local_file, '-E', voms_token], verbose=1)
+  check_download(output_local_file, expected_adler32sum=expected_adler32sum, raise_exception=True,
+                 remote_file=input_remote_file)
 
+def gfal_copy(input_remote_file, output_local_file, voms_token, number_of_streams=2, timeout=7200,
+              expected_adler32sum=None):
+  sh_call(['gfal-copy', '-n', str(number_of_streams), '-t', str(timeout),
+           input_remote_file, output_local_file,], shell=False, env={'X509_USER_PROXY': voms_token}, verbose=1)
+  check_download(output_local_file, expected_adler32sum=expected_adler32sum, raise_exception=True,
+                 remote_file=input_remote_file)
 
 def das_file_site_info(file, verbose=0):
   _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'site file={file}'], catch_stdout=True, verbose=verbose)
@@ -150,26 +163,35 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, verbose=0):
   return pfns
 
 
-def copy_remote_file(input_remote_file, output_local_file, silent=False):
-  verbose = 0 if silent else 1
+def copy_remote_file(input_remote_file, output_local_file, verbose=1):
   pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, verbose=verbose)
+  if os.path.exists(output_local_file):
+    if adler32 is not None and check_download(output_local_file, expected_adler32sum=adler32):
+      return
+    os.remove(output_local_file)
+
   if len(pfns_list) == 0:
     raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
   for pfns in pfns_list:
     try:
-      if not silent:
+      if verbose > 0:
         print(f"Trying to copy file from {pfns}")
       if pfns.startswith('root:'):
-        xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, prefixes=[''], silent=silent)
+        xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, prefixes=[''], verbose=verbose)
         return
       elif pfns.startswith('davs:'):
         voms_info = get_voms_proxy_info()
         webdav_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
         return
+      elif pfns.startswith('srm:'):
+        voms_info = get_voms_proxy_info()
+        gfal_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
+        return
       else:
         print('Skipping an unknown remote source "{pfns}".')
-    except (RuntimeError, ShCallError):
-      pass
+    except (RuntimeError, ShCallError) as e:
+      if verbose > 0:
+        print(f"Failed to copy file from {pfns}. {e}")
 
   raise RuntimeError(f'Unable to copy {input_remote_file} from remote.')
 
