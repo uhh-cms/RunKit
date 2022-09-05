@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 
 from sh_tools import sh_call
@@ -11,7 +12,6 @@ class InputFile:
 class OutputFile:
   def __init__(self):
     self.name = None
-    self.tmp_name = None
     self.expected_size = 0.
     self.input_files = []
 
@@ -22,13 +22,14 @@ class OutputFile:
     self.input_files.append(file)
     return True
 
-  def merge(self):
+  def merge(self, out_dir):
     haddnano_path = os.path.join(os.path.dirname(__file__), 'haddnano.py')
-    cmd = ['python3', '-u', haddnano_path, self.tmp_name ] + [ f.name for f in self.input_files ]
+    self.out_path = os.path.join(out_dir, self.name)
+    cmd = ['python3', '-u', haddnano_path, self.out_path ] + [ f.name for f in self.input_files ]
     sh_call(cmd, verbose=1)
-    self.size = float(os.path.getsize(self.tmp_name)) / (1024 * 1024)
+    self.size = float(os.path.getsize(self.out_path)) / (1024 * 1024)
 
-def merge_files(output, target_size, input_dirs):
+def merge_files(output_dir, output_name, target_size, file_list, input_dirs):
   input_files = []
   for input_dir in input_dirs:
     for root, dirs, files in os.walk(input_dir):
@@ -36,6 +37,15 @@ def merge_files(output, target_size, input_dirs):
         if file.endswith('.root'):
           file_path = os.path.join(root, file)
           input_files.append(InputFile(file_path))
+  if file_list is not None:
+    with open(file_list, 'r') as f:
+      lines = [ l for l in f.read().splitlines() if len(l) > 0 ]
+    for line in lines:
+      if not os.path.exists(line):
+        raise RuntimeError(f'File {line} does not exists.')
+      input_files.append(InputFile(line))
+  if len(input_files) == 0:
+    raise RuntimeError("No input files were found.")
   input_files = sorted(input_files, key=lambda f: -f.size)
   processed_files = set()
   output_files = []
@@ -46,34 +56,38 @@ def merge_files(output, target_size, input_dirs):
         processed_files.add(file)
     output_files.append(output_file)
 
-  output_tmp = output + '.tmp'
-  if os.path.exists(output):
-    shutil.rmtree(output)
-  if os.path.exists(output_tmp):
-    shutil.rmtree(output_tmp)
-  if os.path.exists(output + '.root'):
-    os.remove(output + '.root')
-  output_basename = os.path.basename(output)
-  output_dirname = os.path.dirname(output)
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
-  os.makedirs(output_tmp, exist_ok=False)
+  output_name_base, output_name_ext = os.path.split(output_name)
+  if output_name_ext != '.root':
+    raise RuntimeError(f'Unsupported output file format "{output_name_ext}"')
+  name_pattern = re.compile(f'^{output_name_base}(|_[0-9]+)\.(root|tmp)$')
 
-  for id, file in enumerate(output_files):
-    file.name = os.path.join(output, output_basename + f'_{id}.root')
-    file.tmp_name = os.path.join(output_tmp, output_basename + f'_{id}.root')
+  for file in os.listdir(output_dir):
+    if name_pattern.match(file):
+      file_path = os.path.join(output_dir, file)
+      if os.path.isdir(file_path):
+        shutil.rmtree(file_path)
+      else:
+        os.remove(file_path)
+
+  output_tmp = os.path.join(output_dir, output_name_base + '.tmp')
+  os.makedirs(output_tmp)
 
   if len(output_files) == 1:
-    output_files[0].name = output + '.root'
+    output_files[0].name = output_name
+  else:
+    for id, file in enumerate(output_files):
+      file.name = output_name_base + f'_{id}.root'
 
   for file in output_files:
     print(f'Merging {len(file.input_files)} input files into {file.name}...')
-    file.merge()
+    file.merge(output_tmp)
     print(f'Done. Expected size = {file.expected_size:.1f} MiB, actual size = {file.size:.1f} MiB.')
   print("Moving merged files into the final location and removing temporary files.")
-  if len(output_files) > 1:
-    os.makedirs(output)
   for file in output_files:
-    shutil.move(file.tmp_name, file.name)
+    shutil.move(file.out_path, os.path.join(output_dir, file.name))
   shutil.rmtree(output_tmp)
   print('All inputs have been merged.')
 
@@ -81,13 +95,16 @@ def merge_files(output, target_size, input_dirs):
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='hadd nano files.')
-  parser.add_argument('--output', required=True, type=str,
-                      help="Output where merged files will be stored. If the total number of output files is 1," + \
-                           " the output will be stored as output.root, otherwise an output directory will be" + \
-                           " created and files inside will have name output_N.root")
+  parser.add_argument('--output-dir', required=True, type=str, help="Output where merged files will be stored.")
+  parser.add_argument('--output-name', required=False, type=str, default='nano.root',
+                      help="Name of the output files." + \
+                           " If the number of output files is 1, the name will be as specified in the argument." + \
+                           " If the number of output files is greater than one, _1, _2, etc. suffices will be added.")
+  parser.add_argument('--file-list', required=False, type=str, default=None,
+                      help="txt file with the list of input files to merge")
   parser.add_argument('--target-size', required=False, type=float, default=2*1024.,
                       help="target output file size in MiB")
-  parser.add_argument('input_dir', type=str, nargs='+', help="input directories")
+  parser.add_argument('input_dir', type=str, nargs='*', help="input directories")
   args = parser.parse_args()
 
-  merge_files(args.output, args.target_size, args.input_dir)
+  merge_files(args.output_dir, args.output_name, args.target_size, args.file_list, args.input_dir)
