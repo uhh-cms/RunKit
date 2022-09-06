@@ -11,7 +11,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .crabTaskStatus import JobStatus, Status, StatusOnServer
+from .crabTaskStatus import JobStatus, Status, StatusOnServer, StatusOnScheduler
 from .crabTask import Task
 from .sh_tools import sh_call
 
@@ -127,7 +127,8 @@ def update(tasks, no_status_update=False):
       if task.taskStatus.status == Status.WaitingForRecovery:
         if task.taskStatus.status_on_server == StatusOnServer.SUBMITFAILED:
           task.recoverLocal()
-        elif not task.resubmit():
+        elif task.taskStatus.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ] \
+              or not task.resubmit():
           task.recover()
       else:
         if task.hasFailedJobs():
@@ -136,6 +137,9 @@ def update(tasks, no_status_update=False):
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
         task.preparePostProcessLists()
+        done_flag = task.getPostProcessingDoneFlagFile()
+        if os.path.exists(done_flag):
+          os.remove(done_flag)
         to_post_process.append(task)
       else:
         task.taskStatus.status = Status.Failed
@@ -148,6 +152,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
                   update_cfg=False, no_loop=False):
   if not os.path.exists(work_area):
     os.makedirs(work_area)
+  abs_work_area = os.path.abspath(work_area)
   cfg_path = os.path.join(work_area, 'cfg.yaml')
   if cfg_file is not None:
     shutil.copyfile(cfg_file, cfg_path)
@@ -167,7 +172,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     with open(task_list_file, 'r') as f:
       new_tasks = yaml.safe_load(f)
     for task_name in new_tasks:
-      if task_name in Task._taskCfgProperties: continue
+      if task_name == 'config': continue
       if task_name in tasks:
         if update_cfg:
           tasks[task_name].updateConfig(main_cfg, new_tasks)
@@ -175,6 +180,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         tasks[task_name] = Task.Create(work_area, main_cfg, new_tasks, task_name)
   with open(task_list_path, 'w') as f:
     json.dump([task_name for task_name in tasks], f, indent=2)
+
+  for name, task in tasks.items():
+    task.checkConfigurationValidity()
 
   if 'updateInterval' in main_cfg:
     update_interval = main_cfg['updateInterval']
@@ -190,9 +198,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       cmd = [ 'law', 'run', postproc_params['lawTask'],
               '--workflow', postproc_params['workflow'],
               '--bootstrap-path', postproc_params['bootstrap'],
-              '--work-area', work_area,
-              '--log-path', os.path.join(work_area, 'law', 'logs'),
-              '--sub-dir', os.path.join(work_area, 'law', 'jobs') ]
+              '--work-area', abs_work_area,
+              '--log-path', os.path.join(abs_work_area, 'law', 'logs'),
+              '--sub-dir', os.path.join(abs_work_area, 'law', 'jobs') ]
       if 'requirements' in postproc_params:
         cmd.extend(['--requirements', postproc_params['requirements']])
       sh_call(cmd)

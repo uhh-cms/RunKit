@@ -9,13 +9,13 @@ from .sh_tools import ShCallError, sh_call
 class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
-    'crabOutput', 'localOutputPrefix', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
+    'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'dryrun', 'finalOutput', 'maxResubmitCount', 'maxRecoveryCount',
-    'targetOutputFileSize',
+    'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
   ]
 
   _taskCfgPrivateProperties = [
-    'name', 'inputDataset', 'recoveryIndex', 'resubmitCount', 'taskIds',
+    'name', 'inputDataset', 'recoveryIndex', 'taskIds',
   ]
 
   inputLumiMaskJsonName = 'inputLumis'
@@ -36,7 +36,7 @@ class Task:
     self.filesToTransfer = []
     self.site = ''
     self.crabOutput = ''
-    self.localOutputPrefix = ''
+    self.localCrabOutput = ''
     self.lumiMask = ''
     self.maxMemory = -1
     self.numCores = -1
@@ -48,22 +48,38 @@ class Task:
     self.whitelist = []
     self.dryrun = False
     self.recoveryIndex = 0
-    self.resubmitCount = 0
     self.maxResubmitCount = 0
     self.maxRecoveryCount = 0
     self.finalOutput = ''
     self.targetOutputFileSize = 0
+    self.ignoreFiles = []
+    self.postProcessingDoneFlag = ''
     self.jobInputFiles = None
+    self.datasetFiles = None
     self.fileRunLumi = None
     self.fileRepresentativeRunLumi = None
     self.taskIds = {}
+
+  def checkConfigurationValidity(self):
+    def check(cond, prop):
+      if not cond:
+        raise RuntimeError(f'{self.name}: Configuration error: {prop} is not correctly set.')
+    def check_len(prop):
+      check(len(getattr(self, prop)) > 0, prop)
+
+    for prop in [ 'cmsswPython', 'splitting', 'outputFiles', 'site', 'crabOutput', 'localCrabOutput', 'inputDBS',
+                  'finalOutput', 'name', 'inputDataset' ]:
+      check_len(prop)
+    check(self.unitsPerJob > 0, 'unitsPerJob')
+    check(self.maxMemory > 0, 'maxMemory')
+    check(self.numCores > 0, 'numCores')
 
   def _setFromCfg(self, pName, cfg, add=False):
     if pName in cfg:
       pType = type(getattr(self, pName))
       pValue = cfg[pName]
-      # if pType != type(pValue):
-      #   raise RuntimeError(f'Inconsistent config type for "{pName}".')
+      if pType != type(pValue):
+        raise RuntimeError(f'{self.name}: inconsistent config type for "{pName}". cfg value = "{pValue}"')
       if add:
         if pType == list:
           x = list(set(getattr(self, pName) + pValue))
@@ -162,6 +178,31 @@ class Task:
     if recoveryIndex == self.recoveryIndex:
       self.jobInputFiles = jobInputFiles
     return jobInputFiles
+
+  def getDatasetFiles(self):
+    if self.datasetFiles is None:
+      datasetFilesPath = os.path.join(self.workArea, 'dataset_files.json')
+      fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
+      if os.path.exists(datasetFilesPath):
+        with open(datasetFilesPath, 'r') as f:
+          self.datasetFiles = set(json.load(f))
+      else:
+        if os.path.exists(fileRunLumiPath):
+          self.datasetFiles = set(self.getFileRunLumi().keys())
+        else:
+          print(f'{self.name}: Gathering dataset files ...')
+          _,output,_ = sh_call(['dasgoclient', '--query', f'file dataset={self.inputDataset}'],
+                               catch_stdout=True, split='\n')
+          self.datasetFiles = set()
+          for file in output:
+            file = file.strip()
+            if len(file) > 0:
+              self.datasetFiles.add(file)
+        with open(datasetFilesPath, 'w') as f:
+          json.dump(list(self.datasetFiles), f, indent=2)
+      if len(self.datasetFiles) == 0:
+        raise RuntimeError(f'{self.name}: empty dataset {self.inputDataset}')
+    return self.datasetFiles
 
   def getFileRunLumi(self):
     if self.fileRunLumi is None:
@@ -273,7 +314,7 @@ class Task:
       recoveryIndex = self.recoveryIndex
     datasetParts = [ s for s in self.inputDataset.split('/') if len(s) > 0 ]
     datasetName = datasetParts[0]
-    outputBase = os.path.join(self.localOutputPrefix + self.crabOutput, datasetName)
+    outputBase = os.path.join(self.localCrabOutput, datasetName)
     return os.path.join(outputBase, 'crab_' + self.requestName(recoveryIndex=recoveryIndex),
                         self.getTaskId(recoveryIndex=recoveryIndex))
 
@@ -300,24 +341,26 @@ class Task:
     return os.path.join(self.workArea, f'postProcessList_{outputName}.txt')
 
   def preparePostProcessList(self, outputIndex):
-    allFiles = self.getFileRunLumi().keys()
-    processedFiles = set()
-    outputFiles = []
-    for recoveryIndex in range(self.recoveryIndex + 1):
-      taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
-      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
-      jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
-      for jobId, files in jobFilesDict.items():
-        if len(processedFiles.intersection(files)) == 0:
-          outputFile = self.findOutputFile(taskOutput, jobId, outputIndex)
-          outputFiles.append(outputFile)
-          processedFiles.update(files)
-    missingFiles = list(allFiles - processedFiles)
-    if len(missingFiles) > 0:
-      raise RuntimeError(f'{self.name}: missing outputs for following input files: ' + ' '.join(missingFiles))
-    with open(self.getPostProcessList(outputIndex), 'w') as f:
-      for file in outputFiles:
-        f.write(file + '\n')
+    listFile = self.getPostProcessList(outputIndex)
+    if not os.path.exists(listFile):
+      allFiles = self.getDatasetFiles()
+      processedFiles = set()
+      outputFiles = []
+      for recoveryIndex in range(self.recoveryIndex + 1):
+        taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
+        jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
+        jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
+        for jobId, files in jobFilesDict.items():
+          if len(processedFiles.intersection(files)) == 0:
+            outputFile = self.findOutputFile(taskOutput, jobId, outputIndex)
+            outputFiles.append(outputFile)
+            processedFiles.update(files)
+      missingFiles = list(allFiles - processedFiles - set(self.ignoreFiles))
+      if len(missingFiles) > 0:
+        raise RuntimeError(f'{self.name}: missing outputs for following input files: ' + ' '.join(missingFiles))
+      with open(listFile, 'w') as f:
+        for file in outputFiles:
+          f.write(file + '\n')
 
   def preparePostProcessLists(self):
     for outputIndex in range(len(self.outputFiles)):
@@ -339,6 +382,11 @@ class Task:
         f.write(output)
     self.taskStatus.status = Status.PostProcessingFinished
     self.saveStatus()
+
+  def getPostProcessingDoneFlagFile(self):
+    if len(self.postProcessingDoneFlag) == 0:
+      raise RuntimeError(f'{self.name}: the post-processing file-flag is not set.')
+    return os.path.join(self.workArea, self.postProcessingDoneFlag)
 
   def hasFailedJobs(self):
     return JobStatus.failed in self.taskStatus.job_stat
@@ -378,8 +426,7 @@ class Task:
       return False
     min_retries = min(retries.items(), key=lambda x: x[1])
     max_retries = max(retries.items(), key=lambda x: x[1])
-    self.resubmitCount = min_retries[1]
-    if self.resubmitCount >= self.maxResubmitCount:
+    if min_retries[1] >= self.maxResubmitCount:
       return False
 
     report_str = f'{self.name}: resubmitting {len(retries)} failed jobs.'
@@ -392,13 +439,18 @@ class Task:
     print(report_str)
     sh_call(['crab', 'resubmit', '-d', self.crabArea()], catch_stdout=True)
     self.taskStatus.status = Status.InProgress
-    self.saveCfg()
     self.saveStatus()
     return True
 
   def recover(self):
+    filesToProcess = self.getFilesToProcess()
+    if len(filesToProcess) == 0:
+      print(f'{self.name}: no recovery is needed. All files have been processed.')
+      self.taskStatus.status = Status.CrabFinished
+      self.saveStatus()
+      return True
+
     if self.recoveryIndex < self.maxRecoveryCount:
-      filesToProcess = self.getFilesToProcess()
       jobIds = self.selectJobIds(JobStatus.finished, invert=True)
       lumiMask = self.getRepresentativeLumiMask(filesToProcess)
       msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
@@ -422,11 +474,12 @@ class Task:
         raise e
       return True
     else:
-      self.taskStatus.status = Status.CrabFailed
+      self.taskStatus.status = Status.Failed
       self.saveStatus()
       return False
 
   def recoverLocal(self):
+    print(f'{self.name}: local recovery is not implemented.')
     self.taskStatus.status = Status.Failed
     self.saveStatus()
     return False
@@ -435,7 +488,7 @@ class Task:
     sh_call(['crab', 'kill', '-d', self.crabArea()])
 
   def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):
-    allFiles = self.getFileRunLumi().keys()
+    allFiles = self.getDatasetFiles()
     processedFiles = set()
     if lastRecoveryIndex is None:
       lastRecoveryIndex = self.recoveryIndex
@@ -446,8 +499,9 @@ class Task:
       else:
         jobFilesDict = self.getJobInputFiles(recoveryIndex)
       for key, files in jobFilesDict.items():
-        processedFiles.update(files)
-    return list(allFiles - processedFiles)
+        if len(processedFiles.intersection(files)) == 0:
+          processedFiles.update(files)
+    return list(allFiles - processedFiles - set(self.ignoreFiles))
 
   def checkCompleteness(self, includeNotFinishedFromLastIteration=True):
     def file_set(d):
@@ -459,7 +513,7 @@ class Task:
           all_files.add(file)
       return all_files
 
-    filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration)
+    filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration=includeNotFinishedFromLastIteration)
     if len(filesToProcess):
       print(f'{self.name}: task in not complete. The following files still needs to be processed: {filesToProcess}')
       return False
@@ -470,7 +524,6 @@ class Task:
       jobFilesDict = self.getJobInputFiles(recoveryIndex)
       jobFiles = file_set(jobFilesDict)
 
-      print(f'n files for {recoveryIndex} = {len(jobFiles)}, n_proc = {len(processedFiles)}')
       intersection = processedFiles.intersection(jobFiles)
       if len(intersection):
         print(f'{self.name}: Duplicated files for iteration {recoveryIndex}')
@@ -485,9 +538,21 @@ class Task:
     return True
 
   def updateConfig(self, mainCfg, taskCfg):
+    taskName = self.name
+    customTask = type(taskCfg[taskName]) == dict
     for pName in Task._taskCfgProperties:
       self._setFromCfg(pName, mainCfg, add=False)
-      self._setFromCfg(pName, taskCfg, add=True)
+      if 'config' in taskCfg:
+        self._setFromCfg(pName, taskCfg['config'], add=True)
+      if customTask:
+        self._setFromCfg(pName, taskCfg[taskName], add=True)
+    if customTask:
+      inputDataset = taskCfg[taskName]['inputDataset']
+    else:
+      inputDataset = taskCfg[taskName]
+    if inputDataset != self.inputDataset:
+      raise RuntimeError(f'{self.name}: change of input dataset is not possible')
+
     self.saveCfg()
 
   def updateStatusFromFile(self, statusPath=None, not_exists_ok=True):
@@ -529,11 +594,18 @@ class Task:
     if os.path.exists(task.workArea):
       raise RuntimeError(f'Task with name "{taskName}" already exists.')
     os.mkdir(task.workArea)
+    customTask = type(taskCfg[taskName]) == dict
     for pName in Task._taskCfgProperties:
       task._setFromCfg(pName, mainCfg, add=False)
-      task._setFromCfg(pName, taskCfg, add=True)
+      if 'config' in taskCfg:
+        task._setFromCfg(pName, taskCfg['config'], add=True)
+      if customTask:
+        task._setFromCfg(pName, taskCfg[taskName], add=True)
     task.taskStatus.status = Status.Defined
-    task.inputDataset = taskCfg[taskName]
+    if customTask:
+      task.inputDataset = taskCfg[taskName]['inputDataset']
+    else:
+      task.inputDataset = taskCfg[taskName]
     task.name = taskName
     task.saveCfg()
     task.saveStatus()

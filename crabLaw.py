@@ -21,21 +21,18 @@ class CrabNanoProdTaskPostProcess(HTCondorWorkflow, law.LocalWorkflow):
     with open(task_list_path, 'r') as f:
       task_names = json.load(f)
     branches = {}
-    n = 0
-    for task_name in task_names:
+    for task_id, task_name in enumerate(task_names):
       task = CrabTask.Load(mainWorkArea=self.work_area, taskName=task_name)
       if task.taskStatus.status == Status.CrabFinished:
-        branches[n] = task.workArea
-        n += 1
+        branches[task_id] = (task.workArea, task.getPostProcessingDoneFlagFile())
     return branches
 
   def output(self):
-    work_area = self.branch_data
-    out = os.path.join(work_area, 'post_processing_done.txt')
-    return law.LocalFileTarget(out)
+    work_area, done_flag = self.branch_data
+    return law.LocalFileTarget(done_flag)
 
   def run(self):
-    work_area = self.branch_data
+    work_area, done_flag = self.branch_data
     task = CrabTask.Load(workArea=work_area)
     if task.taskStatus.status != Status.CrabFinished:
       raise RuntimeError(f"task {task.name} is not ready for post-processing")

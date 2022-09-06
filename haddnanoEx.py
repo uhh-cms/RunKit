@@ -1,8 +1,9 @@
 import os
 import re
 import shutil
+import time
 
-from sh_tools import sh_call
+from sh_tools import ShCallError, sh_call
 
 class InputFile:
   def __init__(self, name):
@@ -22,14 +23,31 @@ class OutputFile:
     self.input_files.append(file)
     return True
 
-  def merge(self, out_dir):
-    haddnano_path = os.path.join(os.path.dirname(__file__), 'haddnano.py')
-    self.out_path = os.path.join(out_dir, self.name)
-    cmd = ['python3', '-u', haddnano_path, self.out_path ] + [ f.name for f in self.input_files ]
-    sh_call(cmd, verbose=1)
-    self.size = float(os.path.getsize(self.out_path)) / (1024 * 1024)
+  def try_merge(self):
+    try:
+      if os.path.exists(self.out_path):
+        os.remove(self.out_path)
+      haddnano_path = os.path.join(os.path.dirname(__file__), 'haddnano.py')
+      cmd = ['python3', '-u', haddnano_path, self.out_path ] + [ f.name for f in self.input_files ]
+      sh_call(cmd, verbose=1)
+      self.size = float(os.path.getsize(self.out_path)) / (1024 * 1024)
+      return True, None
+    except (ShCallError, OSError, FileNotFoundError) as e:
+      return False, e
 
-def merge_files(output_dir, output_name, target_size, file_list, input_dirs):
+  def merge(self, out_dir, max_n_retries, retry_interval):
+    n_retries = 0
+    self.out_path = os.path.join(out_dir, self.name)
+    while True:
+      merged, error = self.try_merge()
+      if merged: return
+      n_retries += 1
+      if n_retries == max_n_retries:
+        raise error
+      print(f"Merge failed. {error}\nWaiting {retry_interval} seconds before the next attempt...")
+      time.sleep(retry_interval)
+
+def merge_files(output_dir, output_name, target_size, file_list, input_dirs, max_n_retries, retry_interval):
   input_files = []
   for input_dir in input_dirs:
     for root, dirs, files in os.walk(input_dir):
@@ -59,7 +77,7 @@ def merge_files(output_dir, output_name, target_size, file_list, input_dirs):
   if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-  output_name_base, output_name_ext = os.path.split(output_name)
+  output_name_base, output_name_ext = os.path.splitext(output_name)
   if output_name_ext != '.root':
     raise RuntimeError(f'Unsupported output file format "{output_name_ext}"')
   name_pattern = re.compile(f'^{output_name_base}(|_[0-9]+)\.(root|tmp)$')
@@ -83,7 +101,7 @@ def merge_files(output_dir, output_name, target_size, file_list, input_dirs):
 
   for file in output_files:
     print(f'Merging {len(file.input_files)} input files into {file.name}...')
-    file.merge(output_tmp)
+    file.merge(output_tmp, max_n_retries, retry_interval)
     print(f'Done. Expected size = {file.expected_size:.1f} MiB, actual size = {file.size:.1f} MiB.')
   print("Moving merged files into the final location and removing temporary files.")
   for file in output_files:
@@ -104,7 +122,13 @@ if __name__ == "__main__":
                       help="txt file with the list of input files to merge")
   parser.add_argument('--target-size', required=False, type=float, default=2*1024.,
                       help="target output file size in MiB")
+  parser.add_argument('--n-retries', required=False, type=int, default=4,
+                      help="maximal number of retries in case if hadd fails. " + \
+                           "The retry counter is reset to 0 after each successful hadd.")
+  parser.add_argument('--retry-interval', required=False, type=int, default=60,
+                      help="interval in seconds between retry attempts.")
   parser.add_argument('input_dir', type=str, nargs='*', help="input directories")
   args = parser.parse_args()
 
-  merge_files(args.output_dir, args.output_name, args.target_size, args.file_list, args.input_dir)
+  merge_files(args.output_dir, args.output_name, args.target_size, args.file_list, args.input_dir, args.n_retries,
+              args.retry_interval)
