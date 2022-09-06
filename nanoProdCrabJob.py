@@ -116,7 +116,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
             print("Copying remote files locally...")
             has_remote_files = True
           local_file = f'inputMiniAOD_{n}.root'
-          copy_remote_file(remote_file, local_file, silent=False)
+          copy_remote_file(remote_file, local_file, verbose=1)
           input_files.append(f'file:{local_file}')
           files_to_remove.append(local_file)
 
