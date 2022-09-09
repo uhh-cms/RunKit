@@ -13,7 +13,7 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status, StatusOnServer, StatusOnScheduler
 from .crabTask import Task
-from .sh_tools import sh_call
+from .sh_tools import sh_call, get_voms_proxy_info
 
 class TaskStat:
   summary_only_thr = 10
@@ -59,22 +59,23 @@ class TaskStat:
     if self.n_jobs > 0:
       print('Jobs in active tasks: ' + ', '.join(job_stat))
 
-    if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
-      if(len(self.max_job_stat.items())):
-        print('Task with ...')
-        for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
-          print(f'\tmax {job_status.name} jobs = {cnt}: {task.name} {task.taskStatus.dashboard_url}')
-    else:
-      for task in self.tasks_by_status[Status.InProgress]:
-        text = f'{task.name}: status={task.taskStatus.status.name}. '
-        job_info = []
-        for job_status, count in sorted(task.taskStatus.job_stat.items(), key=lambda x: x[0].value):
-          job_info.append(f'{count} {job_status.name}')
-        if len(job_info) > 0:
-          text += ', '.join(job_info) + '. '
-        if task.taskStatus.dashboard_url is not None:
-          text += task.taskStatus.dashboard_url
-        print(text)
+    if Status.InProgress in self.tasks_by_status:
+      if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
+        if(len(self.max_job_stat.items())):
+          print('Task with ...')
+          for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
+            print(f'\tmax {job_status.name} jobs = {cnt}: {task.name} {task.taskStatus.dashboard_url}')
+      else:
+        for task in self.tasks_by_status[Status.InProgress]:
+          text = f'{task.name}: status={task.taskStatus.status.name}. '
+          job_info = []
+          for job_status, count in sorted(task.taskStatus.job_stat.items(), key=lambda x: x[0].value):
+            job_info.append(f'{count} {job_status.name}')
+          if len(job_info) > 0:
+            text += ', '.join(job_info) + '. '
+          if task.taskStatus.dashboard_url is not None:
+            text += task.taskStatus.dashboard_url
+          print(text)
     if len(self.unknown) > 0:
       print('Tasks with unknown status:')
       for task in self.unknown:
@@ -148,6 +149,16 @@ def update(tasks, no_status_update=False):
   stat.report()
   return to_post_process
 
+def check_prerequisites(main_cfg):
+  if 'CRABCLIENT_TYPE' not in os.environ or len(os.environ['CRABCLIENT_TYPE'].strip()) == 0:
+    raise RuntimeError("Crab environment is not set. Please source /cvmfs/cms.cern.ch/common/crab-setup.sh")
+  voms_info = get_voms_proxy_info()
+  if 'timeleft' not in voms_info or voms_info['timeleft'] < 1:
+    raise RuntimeError('Voms proxy is not initalised or is going to expire soon.' + \
+                       ' Please run "voms-proxy-init -voms cms -rfc -valid 192:00".')
+  if 'postProcessing' in main_cfg and 'LAW_HOME' not in os.environ:
+    raise RuntimeError("Law environment is not setup. It is needed to run post-processing.")
+
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
                   update_cfg=False, no_loop=False):
   if not os.path.exists(work_area):
@@ -161,6 +172,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   with open(cfg_path, 'r') as f:
     main_cfg = yaml.safe_load(f)
 
+  check_prerequisites(main_cfg)
   task_list_path = os.path.join(work_area, 'tasks.json')
   tasks = {}
   if os.path.isfile(task_list_path):
@@ -224,7 +236,8 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       if rlist:
         print(timestamp_str() + "Exiting...")
         break
-    sh_call(['kinit', '-R'])
+    if main_cfg.get('renewKerberosTicket', False):
+      sh_call(['kinit', '-R'])
   if not has_unfinished:
     print("All tasks are done.")
 

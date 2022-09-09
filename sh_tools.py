@@ -71,6 +71,9 @@ def get_voms_proxy_info():
     match = re.match(r'^(.+) : (.+)', line)
     key = match.group(1).strip()
     info[key] = match.group(2)
+  if 'timeleft' in info:
+    h,m,s = info['timeleft'].split(':')
+    info['timeleft'] = float(h) + ( float(m) + float(s) / 60. ) / 60.
   return info
 
 def adler32sum(file_name):
@@ -183,7 +186,7 @@ def copy_remote_file(input_remote_file, output_local_file, verbose=1):
         voms_info = get_voms_proxy_info()
         webdav_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
         return
-      elif pfns.startswith('srm:'):
+      elif pfns.startswith('srm:') or pfns.startswith('gsiftp'):
         voms_info = get_voms_proxy_info()
         gfal_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
         return
