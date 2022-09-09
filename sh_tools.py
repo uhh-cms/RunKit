@@ -13,7 +13,7 @@ class ShCallError(RuntimeError):
     self.return_code = return_code
 
 def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
-            expected_return_codes=[0], env=None, verbose=0):
+            expected_return_codes=[0], env=None, cwd=None, verbose=0):
   cmd_str = []
   for s in cmd:
     if ' ' in s:
@@ -34,6 +34,8 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
       kwargs['stderr'] = subprocess.PIPE
   if env is not None:
     kwargs['env'] = env
+  if cwd is not None:
+    kwargs['cwd'] = cwd
   proc = subprocess.Popen(cmd, **kwargs)
   if catch_stdout and print_output:
     output = b''
@@ -53,13 +55,13 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
       if split is None:
         output = output_decoded
       else:
-        output = [ s for s in output_decoded.split(split) ]
+        output = output_decoded.split(split)
     if catch_stderr:
       err_decoded = err.decode("utf-8")
       if split is None:
         err = err_decoded
       else:
-        err = [ s for s in err_decoded.split(split) ]
+        err = err_decoded.split(split)
 
   return proc.returncode, output, err
 
