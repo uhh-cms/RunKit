@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import re
@@ -5,6 +6,7 @@ import subprocess
 import sys
 import time
 import zlib
+
 
 class ShCallError(RuntimeError):
   def __init__(self, cmd_str, return_code):
@@ -77,6 +79,19 @@ def get_voms_proxy_info():
     h,m,s = info['timeleft'].split(':')
     info['timeleft'] = float(h) + ( float(m) + float(s) / 60. ) / 60.
   return info
+
+def update_kerberos_ticket(verbose=1):
+  sh_call(['kinit', '-R'], verbose=verbose)
+
+def timed_call_wrapper(fn, update_interval):
+  last_update = None
+  def update(*args, **kwargs):
+    nonlocal last_update
+    now = datetime.datetime.now()
+    if last_update is None or (now - last_update).total_seconds() > update_interval:
+      fn(*args, **kwargs)
+      last_update = now
+  return update
 
 def adler32sum(file_name):
   block_size = 256 * 1024 * 1024
