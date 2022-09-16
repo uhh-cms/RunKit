@@ -30,7 +30,7 @@ if options.sampleType == 'data':
 elif options.sampleType == 'mc':
   cond = cond_mc[options.era]
 else:
-  raise RuntimeError(f"Unknown sample type {options.sampleType}")
+  raise RuntimeError(f'Unknown sample type = "{options.sampleType}"')
 
 process = cms.Process('NanoProd')
 process.source = cms.Source("PoolSource", fileNames = cms.untracked.vstring(options.inputFiles))
