@@ -38,11 +38,12 @@ class CrabFailureCategory(Enum):
 class JobStatus(Enum):
   unsubmitted = 0
   idle = 1
-  running = 2
-  toRetry = 3
-  finished = 4
-  failed = 5
-  transferring = 6
+  cooloff = 2
+  running = 3
+  toRetry = 4
+  finished = 5
+  failed = 6
+  transferring = 7
 
 class CrabWarning:
   known_warnings = {
