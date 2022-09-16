@@ -56,6 +56,7 @@ for e in fileHandles[0].GetListOfKeys():
         obj = obj.CloneTree(-1, "fast" if goFast else "")
         branchNames = set([x.GetName() for x in obj.GetListOfBranches()])
     for fh in fileHandles[1:]:
+        if not fh.GetListOfKeys().Contains(name) and str(obj.GetName()).startswith('Events'): continue
         otherObj = fh.GetListOfKeys().FindObject(name).ReadObj()
         inputs.Add(otherObj)
         if isTree and obj.GetName() == 'Events':
