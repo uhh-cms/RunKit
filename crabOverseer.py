@@ -255,4 +255,4 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   overseer_main(args.work_area, args.cfg, args.task_file, verbose=args.verbose, no_status_update=args.no_status_update,
-                update_cfg=args.update_cfg)
+                update_cfg=args.update_cfg, no_loop=args.no_loop)

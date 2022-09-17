@@ -14,6 +14,8 @@ options.register('storeFailed', False, VarParsing.multiplicity.singleton, VarPar
                  "Store minimal information about events that failed selection.")
 options.register('customise', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Production customization code (if any)")
+options.register('customiseCmds', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Production customization commands (if any)")
 
 options.parseArguments()
 
@@ -45,6 +47,7 @@ process.exParams = cms.untracked.PSet(
   skimCfg = cms.untracked.string(options.skimCfg),
   storeFailed = cms.untracked.bool(options.storeFailed),
   customisationFunction = cms.untracked.string(options.customise),
+  customisationCommands = cms.untracked.string(options.customiseCmds),
 )
 
 with open('PSet.py', 'w') as f:

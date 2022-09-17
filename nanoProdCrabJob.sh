@@ -7,6 +7,8 @@ if ! [ -f "$prod_py" ] ; then
   exit 1
 fi
 
+echo "which python"
+which python3
 if [ "x$1" = "xDEBUG" ] ; then
   python3 -u "$prod_py" "${@:2}"
 else
