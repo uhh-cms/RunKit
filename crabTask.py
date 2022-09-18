@@ -2,6 +2,12 @@ import json
 import os
 import re
 import shutil
+import sys
+
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  sys.path.append(os.path.dirname(file_dir))
+  __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser
 from .sh_tools import ShCallError, sh_call
@@ -274,9 +280,10 @@ class Task:
       if file not in repRunLumi:
         raise RuntimeError(f'{self.name}: cannot find representative run-lumi for "{file}"')
       run, lumi = repRunLumi[file]
+      run = str(run)
       if run not in lumiMask:
-        lumiMask[str(run)] = []
-      lumiMask[str(run)].append([lumi, lumi])
+        lumiMask[run] = []
+      lumiMask[run].append([lumi, lumi])
     return lumiMask
 
   def selectJobIds(self, jobStatus, invert=False, recoveryIndex=None):
@@ -620,7 +627,7 @@ if __name__ == "__main__":
   #ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
   #print(f'{task.name}: {ok}')
   # print(task.getAllOutputPaths())
-  filesToProcess = task.getFilesToProcess(lastRecoveryIndex=1)
+  filesToProcess = task.getFilesToProcess()
   print(f'{task.name}: {len(filesToProcess)} {filesToProcess}')
   lumiMask = task.getRepresentativeLumiMask(filesToProcess)
   n_lumi = sum([ len(x) for _, x in lumiMask.items()])
