@@ -143,8 +143,7 @@ def update(tasks, no_status_update=False):
           os.remove(done_flag)
         to_post_process.append(task)
       else:
-        task.taskStatus.status = Status.Failed
-        task.saveStatus()
+        task.recover()
     stat.add(task)
   stat.report()
   return to_post_process

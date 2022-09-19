@@ -470,6 +470,7 @@ class Task:
         raise RuntimeError(f"{self.name}: number of representative lumi sections != number of files to process.")
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
+      self.jobInputFiles = None
       with open(self.getLumiMask(), 'w') as f:
         json.dump(lumiMask, f)
       self.saveCfg()
@@ -522,7 +523,7 @@ class Task:
 
     filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration=includeNotFinishedFromLastIteration)
     if len(filesToProcess):
-      print(f'{self.name}: task in not complete. The following files still needs to be processed: {filesToProcess}')
+      print(f'{self.name}: task is not complete. The following files still needs to be processed: {filesToProcess}')
       return False
 
     processedFiles = set()
@@ -624,8 +625,8 @@ if __name__ == "__main__":
   workArea = sys.argv[1]
   task = Task.Load(workArea=workArea)
 
-  #ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
-  #print(f'{task.name}: {ok}')
+  # ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
+  # print(f'{task.name}: {ok}')
   # print(task.getAllOutputPaths())
   filesToProcess = task.getFilesToProcess()
   print(f'{task.name}: {len(filesToProcess)} {filesToProcess}')
