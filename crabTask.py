@@ -10,7 +10,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser
+from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler
 from .sh_tools import ShCallError, sh_call
 
 class Task:
@@ -295,6 +295,13 @@ class Task:
         jobIds.append(jobId)
     return jobIds
 
+  def getTimeSinceLastJobStatusUpdate(self):
+    if self.lastJobStatusUpdate <= 0:
+      return -1
+    now = datetime.datetime.now()
+    t = datetime.datetime.fromtimestamp(self.lastJobStatusUpdate)
+    return (now - t).total_seconds() / (60 * 60)
+
   def getTaskStatus(self, recoveryIndex=None):
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
@@ -429,6 +436,8 @@ class Task:
     with open(self.lastCrabStatusLog(), 'w') as f:
       f.write('\n'.join(output))
     self.getTaskId()
+    if self.taskStatus.status_on_scheduler in [StatusOnScheduler.SUBMITTED, StatusOnScheduler.COMPLETED]:
+      self.getJobInputFiles()
     now = datetime.datetime.now()
     if self.lastJobStatusUpdate <= 0:
       self.lastJobStatusUpdate = now.timestamp()
