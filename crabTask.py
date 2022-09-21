@@ -17,8 +17,9 @@ class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
-    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'dryrun', 'finalOutput', 'maxResubmitCount', 'maxRecoveryCount',
-    'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
+    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
+    'maxResubmitCount', 'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
+    'ignoreLocality'
   ]
 
   _taskCfgPrivateProperties = [
@@ -53,6 +54,8 @@ class Task:
     self.vomsRole = ''
     self.blacklist = []
     self.whitelist = []
+    self.whitelistFinalRecovery = []
+    self.ignoreLocality = False
     self.dryrun = False
     self.recoveryIndex = 0
     self.maxResubmitCount = 0
@@ -144,6 +147,20 @@ class Task:
     if self.recoveryIndex == self.maxRecoveryCount:
       return max(self.maxMemory, 4000)
     return self.maxMemory
+
+  def getWhiteList(self):
+    if self.recoveryIndex == self.maxRecoveryCount:
+      return self.whitelistFinalRecovery
+    return self.whitelist
+
+  def getBlackList(self):
+    return self.blacklist
+
+  def getIgnoreLocality(self):
+    if self.recoveryIndex == self.maxRecoveryCount:
+      return True
+    return self.ignoreLocality
+
 
   def getLocalJobArea(self, recoveryIndex=None):
     localArea = os.path.join(self.crabArea(recoveryIndex), 'local')
