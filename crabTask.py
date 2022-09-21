@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import re
@@ -21,7 +22,7 @@ class Task:
   ]
 
   _taskCfgPrivateProperties = [
-    'name', 'inputDataset', 'recoveryIndex', 'taskIds',
+    'name', 'inputDataset', 'recoveryIndex', 'taskIds', 'lastJobStatusUpdate',
   ]
 
   inputLumiMaskJsonName = 'inputLumis'
@@ -65,6 +66,7 @@ class Task:
     self.fileRunLumi = None
     self.fileRepresentativeRunLumi = None
     self.taskIds = {}
+    self.lastJobStatusUpdate = -1.
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -137,7 +139,7 @@ class Task:
     return self.lumiMask
 
   def getMaxMemory(self):
-    if self.recoveryIndex > 0:
+    if self.recoveryIndex == self.maxRecoveryCount:
       return max(self.maxMemory, 4000)
     return self.maxMemory
 
@@ -421,11 +423,23 @@ class Task:
   def updateStatus(self):
     returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                       catch_stdout=True, split='\n')
+    oldTaskStatus = self.taskStatus
     self.taskStatus = LogEntryParser.Parse(output)
     self.saveStatus()
     with open(self.lastCrabStatusLog(), 'w') as f:
       f.write('\n'.join(output))
     self.getTaskId()
+    now = datetime.datetime.now()
+    if self.lastJobStatusUpdate <= 0:
+      self.lastJobStatusUpdate = now.timestamp()
+      self.saveCfg()
+    else:
+      oldJobStatus = oldTaskStatus.get_job_status()
+      for jobId, status in self.taskStatus.get_job_status().items():
+        if jobId not in oldJobStatus or status != oldJobStatus[jobId]:
+          self.lastJobStatusUpdate = now.timestamp()
+          self.saveCfg()
+          break
 
   def resubmit(self):
     retries = self.taskStatus.get_detailed_job_stat('Retries', JobStatus.failed)
@@ -493,6 +507,7 @@ class Task:
     return False
 
   def kill(self):
+    self.getJobInputFiles()
     sh_call(['crab', 'kill', '-d', self.crabArea()])
 
   def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):

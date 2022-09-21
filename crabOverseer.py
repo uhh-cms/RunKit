@@ -93,13 +93,27 @@ def timestamp_str():
   return f'[{t_str}] '
 
 def sanity_checks(task):
+  abnormal_inactivity_thr = 24
+
   if task.taskStatus.status == Status.InProgress:
+    if task.lastJobStatusUpdate > 0:
+      now = datetime.datetime.now()
+      t = datetime.datetime.fromtimestamp(task.lastJobStatusUpdate)
+      delta_t = (now - t).total_seconds() / (60 * 60)
+      if delta_t > abnormal_inactivity_thr:
+        text = f'{task.name}: status of all jobs is not changed for at least {delta_t:.1f} hours.' \
+               + ' It is very likely that this task is stacked. The task will be killed following by recovery attempts.'
+        print(text)
+        task.kill()
+        return False
+
+
     job_states = sorted(task.taskStatus.job_stat.keys(), key=lambda x: x.value)
     ref_states = [ JobStatus.running, JobStatus.finished, JobStatus.failed ]
     if len(job_states) <= len(ref_states) and job_states == ref_states[:len(job_states)]:
       now = datetime.datetime.now()
       start_times = task.taskStatus.get_detailed_job_stat('StartTimes', JobStatus.running)
-      abnormal_run_thr = 24
+
       job_runs = []
       for job_id, start_time in start_times.items():
         t = datetime.datetime.fromtimestamp(start_time[-1])
@@ -107,12 +121,13 @@ def sanity_checks(task):
         job_runs.append([job_id, delta_t])
       job_runs = sorted(job_runs, key=lambda x: x[1])
       max_run = job_runs[0][1]
-      if max_run > abnormal_run_thr:
+      if max_run > abnormal_inactivity_thr:
         text = f'{task.name}: all running jobs are running for at least {max_run:.1f} hours.' \
               + ' It is very likely that these jobs are stacked. Task will be killed following by recovery attempts.'
         print(text)
         task.kill()
         return False
+
   return True
 
 def update(tasks, no_status_update=False):
