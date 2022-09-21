@@ -44,6 +44,7 @@ class JobStatus(Enum):
   finished = 5
   failed = 6
   transferring = 7
+  killed = 8
 
 class CrabWarning:
   known_warnings = {
@@ -102,6 +103,8 @@ class LogEntryParser:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
       if task_status.status_on_server == StatusOnServer.SUBMITTED:
         task_status.status = Status.InProgress
+      if task_status.status_on_server == StatusOnServer.KILLED:
+        task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
         task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
@@ -244,17 +247,19 @@ class LogEntryParser:
       'ave': to_seconds(match.group(3)),
     }
 
-    cpu_str = log_lines[n + 3].strip()
+    shift = 3
+    cpu_str = log_lines[n + shift].strip()
     match = re.match(r'^\* CPU eff: ([0-9]+)% min, ([0-9]+)% max, ([0-9]+)% ave$', cpu_str)
-    if match is None:
-      raise RuntimeError(f'Invalid CPU eff stat = "{cpu_str}"')
-    task_status.run_stat["CPU"] = {
-      'min': int(match.group(1)),
-      'max': int(match.group(2)),
-      'ave': int(match.group(3)),
-    }
+    if match is not None:
+      # raise RuntimeError(f'Invalid CPU eff stat = "{cpu_str}"')
+      task_status.run_stat["CPU"] = {
+        'min': int(match.group(1)),
+        'max': int(match.group(2)),
+        'ave': int(match.group(3)),
+      }
+      shift += 1
 
-    waste_str = log_lines[n + 4].strip()
+    waste_str = log_lines[n + shift].strip()
     match = re.match(r'^\* Waste: ([0-9]+:[0-9]+:[0-9]+) \(([0-9]+)% of total\)$', waste_str)
     if match is None:
       raise RuntimeError(f'Invalid waste stat = "{waste_str}"')
@@ -262,8 +267,9 @@ class LogEntryParser:
       'time': to_seconds(match.group(1)),
       'fraction_of_total': int(match.group(2)),
     }
+    shift += 1
 
-    return n + 5
+    return n + shift
 
   def task_boostrapped(task_status, log_lines, n, value):
     if n + 1 >= len(log_lines) or log_lines[n + 1].strip() != LogEntryParser.status_will_be_available:

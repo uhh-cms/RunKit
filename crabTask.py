@@ -86,6 +86,8 @@ class Task:
     if pName in cfg:
       pType = type(getattr(self, pName))
       pValue = cfg[pName]
+      if pType == float and type(pValue) == int:
+        pValue = float(pValue)
       if pType != type(pValue):
         raise RuntimeError(f'{self.name}: inconsistent config type for "{pName}". cfg value = "{pValue}"')
       if add:
@@ -439,16 +441,20 @@ class Task:
     if self.taskStatus.status_on_scheduler in [StatusOnScheduler.SUBMITTED, StatusOnScheduler.COMPLETED]:
       self.getJobInputFiles()
     now = datetime.datetime.now()
-    if self.lastJobStatusUpdate <= 0:
+    hasUpdates = self.lastJobStatusUpdate <= 0
+    if not hasUpdates:
+      jobStatus = self.taskStatus.get_job_status()
+      oldJobStatus = oldTaskStatus.get_job_status()
+      if len(jobStatus) != len(oldJobStatus):
+        hasUpdates = True
+      else:
+        for jobId, status in self.taskStatus.get_job_status().items():
+          if jobId not in oldJobStatus or status != oldJobStatus[jobId]:
+            hasUpdates = True
+            break
+    if hasUpdates:
       self.lastJobStatusUpdate = now.timestamp()
       self.saveCfg()
-    else:
-      oldJobStatus = oldTaskStatus.get_job_status()
-      for jobId, status in self.taskStatus.get_job_status().items():
-        if jobId not in oldJobStatus or status != oldJobStatus[jobId]:
-          self.lastJobStatusUpdate = now.timestamp()
-          self.saveCfg()
-          break
 
   def resubmit(self):
     retries = self.taskStatus.get_detailed_job_stat('Retries', JobStatus.failed)
@@ -494,6 +500,7 @@ class Task:
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
       self.jobInputFiles = None
+      self.lastJobStatusUpdate = -1.
       with open(self.getLumiMask(), 'w') as f:
         json.dump(lumiMask, f)
       self.saveCfg()
