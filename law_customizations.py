@@ -6,7 +6,7 @@ import os
 law.contrib.load("htcondor")
 
 class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
-    max_runtime = law.DurationParameter(default=12.0, unit="h", significant=False,
+    max_runtime = law.DurationParameter(default=24.0, unit="h", significant=False,
                                         description="maximum runtime, default unit is hours")
     requirements = luigi.Parameter(default='')
     #requirements = luigi.Parameter(default='( (OpSysAndVer =?= "CentOS7") || (OpSysAndVer =?= "CentOS8") )')
