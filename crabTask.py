@@ -19,6 +19,8 @@ class Task:
   ]
 
   inputLumiMaskJsonName = 'inputLumis'
+  crabOperationTimeout = 10 * 60
+  dasOperationTimeout = 10 * 60
 
   def __init__(self):
     self.taskStatus = CrabTaskStatus()
@@ -139,7 +141,8 @@ class Task:
     localArea = os.path.join(self.crabArea(recoveryIndex), 'local')
     if not os.path.exists(localArea):
       print(f'{self.name}: Preparing local job area ...')
-      sh_call(['crab', 'preparelocal', '-d', self.crabArea(recoveryIndex), f'--destdir={localArea}'], catch_stdout=True)
+      sh_call(['crab', 'preparelocal', '-d', self.crabArea(recoveryIndex), f'--destdir={localArea}'],
+              catch_stdout=True, timeout=Task.crabOperationTimeout)
     if not os.path.exists(localArea):
       raise RuntimeError(f'{self.name}: unable to prepare local job area')
     return localArea
@@ -192,7 +195,7 @@ class Task:
         else:
           print(f'{self.name}: Gathering dataset files ...')
           _,output,_ = sh_call(['dasgoclient', '--query', f'file dataset={self.inputDataset}'],
-                               catch_stdout=True, split='\n')
+                               catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout)
           self.datasetFiles = set()
           for file in output:
             file = file.strip()
@@ -211,7 +214,7 @@ class Task:
       allRuns = f'file,run,lumi dataset={self.inputDataset}'
 
       def getDasInfo(cmd):
-        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n')
+        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout)
         descs = []
         for desc in output:
           desc = desc.strip()
@@ -402,7 +405,7 @@ class Task:
     if self.recoveryIndex == 0:
       print(f'{self.name}: submitting ...')
     try:
-      sh_call(['python3', crabSubmitPath, self.workArea])
+      sh_call(['python3', crabSubmitPath, self.workArea], timeout=Task.crabOperationTimeout)
       self.taskStatus.status = Status.Submitted
       self.saveStatus()
     except ShCallError as e:
@@ -413,7 +416,7 @@ class Task:
 
   def updateStatus(self):
     returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
-                                      catch_stdout=True, split='\n')
+                                      catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout)
     self.taskStatus = LogEntryParser.Parse(output)
     self.saveStatus()
     with open(self.lastCrabStatusLog(), 'w') as f:
@@ -437,7 +440,7 @@ class Task:
       report_str += f' = {min_retries[1]}/{max_retries[1]}.'
     report_str += f' The max number of allowed attempts = {self.maxResubmitCount}.'
     print(report_str)
-    sh_call(['crab', 'resubmit', '-d', self.crabArea()], catch_stdout=True)
+    sh_call(['crab', 'resubmit', '-d', self.crabArea()], catch_stdout=True, timeout=Task.crabOperationTimeout)
     self.taskStatus.status = Status.InProgress
     self.saveStatus()
     return True
@@ -485,7 +488,7 @@ class Task:
     return False
 
   def kill(self):
-    sh_call(['crab', 'kill', '-d', self.crabArea()])
+    sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout)
 
   def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):
     allFiles = self.getDatasetFiles()
