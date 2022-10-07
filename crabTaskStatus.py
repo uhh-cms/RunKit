@@ -15,9 +15,10 @@ class Status(Enum):
   Failed = 8
 
 class StatusOnServer(Enum):
-  SUBMITTED = 1
-  KILLED = 2
-  SUBMITFAILED = 3
+  QUEUED = 1
+  SUBMITTED = 2
+  KILLED = 3
+  SUBMITFAILED = 4
 
 class StatusOnScheduler(Enum):
   SUBMITTED = 1
@@ -99,6 +100,8 @@ class LogEntryParser:
             break
         if not method_found:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
+      if task_status.status_on_server == StatusOnServer.QUEUED:
+        task_status.status = Status.Submitted
       if task_status.status_on_server == StatusOnServer.SUBMITTED:
         task_status.status = Status.InProgress
       if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
@@ -121,9 +124,12 @@ class LogEntryParser:
     return n + 1
 
   def status_on_server(task_status, log_lines, n, value):
-    if value not in StatusOnServer.__members__:
-      raise RuntimeError(f'Unknown status on the CRAB server = "{value}"')
-    task_status.status_on_server = StatusOnServer[value]
+    if value == "QUEUED on command SUBMIT":
+      task_status.status_on_server = StatusOnServer.QUEUED
+    else:
+      if value not in StatusOnServer.__members__:
+        raise RuntimeError(f'Unknown status on the CRAB server = "{value}"')
+      task_status.status_on_server = StatusOnServer[value]
     return n + 1
 
   def status_on_scheduler(task_status, log_lines, n, value):
