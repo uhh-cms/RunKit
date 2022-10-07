@@ -7,16 +7,23 @@ import sys
 import time
 import traceback
 import zlib
+from threading import Timer
 
 
 class ShCallError(RuntimeError):
-  def __init__(self, cmd_str, return_code):
-    super(ShCallError, self).__init__(f'Error while running "{cmd_str}". Error code: {return_code}')
+  def __init__(self, cmd_str, return_code, additional_message=None):
+    msg = f'Error while running "{cmd_str}."'
+    if return_code is not None:
+      msg += f' Error code: {return_code}'
+    if additional_message is not None:
+      msg += f' {additional_message}'
+    super(ShCallError, self).__init__(msg)
     self.cmd_str = cmd_str
     self.return_code = return_code
+    self.message = additional_message
 
 def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
-            expected_return_codes=[0], env=None, cwd=None, verbose=0):
+            expected_return_codes=[0], env=None, cwd=None, timeout=None, verbose=0):
   cmd_str = []
   for s in cmd:
     if ' ' in s:
@@ -39,17 +46,25 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
     kwargs['env'] = env
   if cwd is not None:
     kwargs['cwd'] = cwd
+
   proc = subprocess.Popen(cmd, **kwargs)
-  if catch_stdout and print_output:
-    output = b''
-    err = b''
-    for line in proc.stdout:
-      output += line
-      print(line.decode("utf-8"), end="")
-    proc.stdout.close()
-    proc.wait()
-  else:
-    output, err = proc.communicate()
+  timer = Timer(timeout, proc.kill) if timeout is not None else None
+  try:
+    if timer is not None:
+      timer.start()
+    if catch_stdout and print_output:
+      output = b''
+      err = b''
+      for line in proc.stdout:
+        output += line
+        print(line.decode("utf-8"), end="")
+      proc.stdout.close()
+      proc.wait()
+    else:
+      output, err = proc.communicate()
+  finally:
+    if timer is not None:
+      timer.cancel()
   if expected_return_codes is not None and proc.returncode not in expected_return_codes:
     raise ShCallError(cmd_str, proc.returncode)
   if decode:
@@ -84,12 +99,15 @@ def get_voms_proxy_info():
 def update_kerberos_ticket(verbose=1):
   sh_call(['kinit', '-R'], verbose=verbose)
 
-def timed_call_wrapper(fn, update_interval):
+def timed_call_wrapper(fn, update_interval, verbose=0):
   last_update = None
   def update(*args, **kwargs):
     nonlocal last_update
     now = datetime.datetime.now()
-    if last_update is None or (now - last_update).total_seconds() > update_interval:
+    delta_t = (now - last_update).total_seconds() if last_update is not None else float("inf")
+    if verbose > 0:
+      print(f"timed_call for {fn.__name__}: delta_t = {delta_t} seconds")
+    if delta_t >= update_interval:
       fn(*args, **kwargs)
       last_update = now
   return update
