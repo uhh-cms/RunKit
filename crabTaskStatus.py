@@ -18,6 +18,7 @@ class StatusOnServer(Enum):
   SUBMITTED = 1
   KILLED = 2
   SUBMITFAILED = 3
+  RESUBMITFAILED = 4
 
 class StatusOnScheduler(Enum):
   SUBMITTED = 1
@@ -109,7 +110,7 @@ class LogEntryParser:
         task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
         task_status.status = Status.CrabFinished
-      if task_status.status_on_server == StatusOnServer.SUBMITFAILED:
+      if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED ]:
         task_status.status = Status.WaitingForRecovery
     except RuntimeError as e:
       task_status.status = Status.Unknown

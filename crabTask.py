@@ -610,6 +610,9 @@ class Task:
       raise RuntimeError(f'{self.name}: change of input dataset is not possible')
 
     self.saveCfg()
+    if self.taskStatus.status == Status.Failed:
+      self.taskStatus.status = Status.WaitingForRecovery
+      self.saveStatus()
 
   def updateStatusFromFile(self, statusPath=None, not_exists_ok=True):
     if statusPath is None:
