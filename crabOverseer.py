@@ -27,6 +27,7 @@ class TaskStat:
     self.unknown = []
     self.waiting_for_recovery = []
     self.failed = []
+    self.max_inactivity = None
 
   def add(self, task):
     self.all_tasks.append(task)
@@ -41,6 +42,9 @@ class TaskStat:
         self.n_jobs += count
         if job_status not in self.max_job_stat or self.max_job_stat[job_status][0] < count:
           self.max_job_stat[job_status] = (count, task)
+      delta_t = int(task.getTimeSinceLastJobStatusUpdate())
+      if delta_t > 0 and (self.max_inactivity is None or delta_t > self.max_inactivity[1]):
+        self.max_inactivity = (task, delta_t)
     if task.taskStatus.status == Status.Unknown:
       self.unknown.append(task)
     if task.taskStatus.status == Status.WaitingForRecovery:
@@ -65,9 +69,16 @@ class TaskStat:
           print('Task with ...')
           for job_status, (cnt, task) in sorted(self.max_job_stat.items(), key=lambda a: a[0].value):
             print(f'\tmax {job_status.name} jobs = {cnt}: {task.name} {task.taskStatus.dashboard_url}')
+          if self.max_inactivity is not None:
+            task, delta_t = self.max_inactivity
+            print(f'\tmax since_last_job_status_change = {delta_t}h: {task.name} {task.taskStatus.dashboard_url}')
       else:
         for task in self.tasks_by_status[Status.InProgress]:
           text = f'{task.name}: status={task.taskStatus.status.name}. '
+          delta_t = int(task.getTimeSinceLastJobStatusUpdate())
+          if delta_t > 0:
+            text += f' since_last_job_status_change={delta_t}h. '
+
           job_info = []
           for job_status, count in sorted(task.taskStatus.job_stat.items(), key=lambda x: x[0].value):
             job_info.append(f'{count} {job_status.name}')
@@ -93,13 +104,24 @@ def timestamp_str():
   return f'[{t_str}] '
 
 def sanity_checks(task):
+  abnormal_inactivity_thr = 24
+
   if task.taskStatus.status == Status.InProgress:
+    delta_t = task.getTimeSinceLastJobStatusUpdate()
+    if delta_t > abnormal_inactivity_thr:
+      text = f'{task.name}: status of all jobs is not changed for at least {delta_t:.1f} hours.' \
+              + ' It is very likely that this task is stacked. The task will be killed following by recovery attempts.'
+      print(text)
+      task.kill()
+      return False
+
+
     job_states = sorted(task.taskStatus.job_stat.keys(), key=lambda x: x.value)
     ref_states = [ JobStatus.running, JobStatus.finished, JobStatus.failed ]
     if len(job_states) <= len(ref_states) and job_states == ref_states[:len(job_states)]:
       now = datetime.datetime.now()
       start_times = task.taskStatus.get_detailed_job_stat('StartTimes', JobStatus.running)
-      abnormal_run_thr = 24
+
       job_runs = []
       for job_id, start_time in start_times.items():
         t = datetime.datetime.fromtimestamp(start_time[-1])
@@ -107,12 +129,13 @@ def sanity_checks(task):
         job_runs.append([job_id, delta_t])
       job_runs = sorted(job_runs, key=lambda x: x[1])
       max_run = job_runs[0][1]
-      if max_run > abnormal_run_thr:
+      if max_run > abnormal_inactivity_thr:
         text = f'{task.name}: all running jobs are running for at least {max_run:.1f} hours.' \
               + ' It is very likely that these jobs are stacked. Task will be killed following by recovery attempts.'
         print(text)
         task.kill()
         return False
+
   return True
 
 def update(tasks, no_status_update=False):
@@ -143,8 +166,7 @@ def update(tasks, no_status_update=False):
           os.remove(done_flag)
         to_post_process.append(task)
       else:
-        task.taskStatus.status = Status.Failed
-        task.saveStatus()
+        task.recover()
     stat.add(task)
   stat.report()
   return to_post_process
@@ -255,4 +277,4 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   overseer_main(args.work_area, args.cfg, args.task_file, verbose=args.verbose, no_status_update=args.no_status_update,
-                update_cfg=args.update_cfg)
+                update_cfg=args.update_cfg, no_loop=args.no_loop)

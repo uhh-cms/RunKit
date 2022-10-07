@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import zlib
 from threading import Timer
 
@@ -119,61 +120,86 @@ def adler32sum(file_name):
       asum = zlib.adler32(data, asum)
   return asum
 
-def check_download(local_file, expected_adler32sum=None, raise_exception=False, remote_file=None,
+def check_download(local_file, expected_adler32sum=None, raise_error=False, remote_file=None,
                    remove_bad_file=False):
   if expected_adler32sum is not None:
     asum = adler32sum(local_file)
     if asum != expected_adler32sum:
       if remove_bad_file:
         os.remove(local_file)
-      if raise_exception:
+      if raise_error:
         remote_name = remote_file if remote_file is not None else 'file'
         raise RuntimeError(f'Unable to copy {remote_name} from remote. Failed adler32sum check.' + \
                            f' {asum:x} != {expected_adler32sum:x}.')
       return False
   return True
 
+def repeat_until_success(fn, opt_list=([],), raise_error=True, error_message="", n_retries=4, retry_sleep_interval=10,
+                         verbose=1):
+  for n in range(n_retries):
+    for opt in opt_list:
+      try:
+        fn(*opt)
+        return True
+      except:
+        if verbose > 0:
+          print(traceback.format_exc())
+      if n != n_retries - 1:
+        if verbose > 0:
+          print(f'Waiting for {retry_sleep_interval} seconds before the next try.')
+        time.sleep(retry_sleep_interval)
 
-def xrd_copy(input_file_name, local_name, n_retries=4, n_retries_xrdcp=4, n_streams=1, retry_sleep_interval=10,
+  if raise_error:
+    raise RuntimeError(error_message)
+  return False
+
+def xrd_copy(input_remote_file, output_local_file, n_retries=4, n_retries_xrdcp=4, n_streams=1, retry_sleep_interval=10,
              expected_adler32sum=None, verbose=1,
              prefixes = [ 'root://cms-xrd-global.cern.ch/', 'root://xrootd-cms.infn.it/',
                           'root://cmsxrootd.fnal.gov/' ]):
-  def try_download(prefix):
-    try:
-      xrdcp_args = ['xrdcp', '--retry', str(n_retries_xrdcp), '--streams', str(n_streams) ]
-      if os.path.exists(local_name):
-        xrdcp_args.append('--continue')
-      if verbose == 0:
-        xrdcp_args.append('--silent')
-      xrdcp_args.extend([f'{prefix}{input_file_name}', local_name])
-      sh_call(xrdcp_args, verbose=1)
-      return True
-    except ShCallError as e:
-        return False
+  def download(prefix):
+    xrdcp_args = ['xrdcp', '--retry', str(n_retries_xrdcp), '--streams', str(n_streams) ]
+    if os.path.exists(output_local_file):
+      xrdcp_args.append('--continue')
+    if verbose == 0:
+      xrdcp_args.append('--silent')
+    xrdcp_args.extend([f'{prefix}{input_remote_file}', output_local_file])
+    sh_call(xrdcp_args, verbose=1)
 
-  if os.path.exists(local_name):
-    os.remove(local_name)
+    check_download(output_local_file, expected_adler32sum=expected_adler32sum, remove_bad_file=True,
+                   raise_error=True, remote_file=input_remote_file)
 
-  for n in range(n_retries):
-    for prefix in prefixes:
-      if try_download(prefix) and check_download(local_name, expected_adler32sum=expected_adler32sum,
-                                                 remove_bad_file=True):
-        return
-      time.sleep(retry_sleep_interval)
+  if os.path.exists(output_local_file):
+    os.remove(output_local_file)
 
-  raise RuntimeError(f'Unable to copy {input_file_name} from remote.')
+  repeat_until_success(download, opt_list=[ (prefix, ) for prefix in prefixes ], raise_error=True,
+                       error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
+                       retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
-def webdav_copy(input_remote_file, output_local_file, voms_token, expected_adler32sum=None):
-  sh_call(['davix-get', input_remote_file, output_local_file, '-E', voms_token], verbose=1)
-  check_download(output_local_file, expected_adler32sum=expected_adler32sum, raise_exception=True,
-                 remote_file=input_remote_file)
+def webdav_copy(input_remote_file, output_local_file, voms_token, expected_adler32sum=None, n_retries=4,
+                retry_sleep_interval=10, verbose=1):
+  def download():
+    if os.path.exists(output_local_file):
+      os.remove(output_local_file)
+    sh_call(['davix-get', input_remote_file, output_local_file, '-E', voms_token], verbose=verbose)
+    check_download(output_local_file, expected_adler32sum=expected_adler32sum, remove_bad_file=True,
+                   raise_error=True, remote_file=input_remote_file)
+
+  repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
+                       n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
 def gfal_copy(input_remote_file, output_local_file, voms_token, number_of_streams=2, timeout=7200,
-              expected_adler32sum=None):
-  sh_call(['gfal-copy', '-n', str(number_of_streams), '-t', str(timeout),
-           input_remote_file, output_local_file,], shell=False, env={'X509_USER_PROXY': voms_token}, verbose=1)
-  check_download(output_local_file, expected_adler32sum=expected_adler32sum, raise_exception=True,
-                 remote_file=input_remote_file)
+              expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, verbose=1):
+  def download():
+    if os.path.exists(output_local_file):
+      os.remove(output_local_file)
+    sh_call(['gfal-copy', '-n', str(number_of_streams), '-t', str(timeout), input_remote_file, output_local_file,],
+            shell=False, env={'X509_USER_PROXY': voms_token}, verbose=1)
+    check_download(output_local_file, expected_adler32sum=expected_adler32sum, remove_bad_file=True,
+                   raise_error=True, remote_file=input_remote_file)
+
+  repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
+                       n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
 def das_file_site_info(file, verbose=0):
   _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'site file={file}'], catch_stdout=True, verbose=verbose)
@@ -181,28 +207,32 @@ def das_file_site_info(file, verbose=0):
 
 def das_file_pfns(file, disk_only=True, return_adler32=False, verbose=0):
   site_info = das_file_site_info(file, verbose=verbose)
-  pfns = []
+  pfns_disk = set()
+  pfns_other = set()
   adler32 = None
   for entry in site_info:
     if "site" not in entry: continue
     for site in entry["site"]:
       if "pfns" not in site: continue
       for pfns_link, pfns_info in site["pfns"].items():
-        if (not disk_only or ("type" in pfns_info and pfns_info["type"] == "DISK")) \
-            and pfns_link not in pfns:
-          pfns.append(pfns_link)
+        if pfns_info.get("type", None) == "DISK":
+          pfns_disk.add(pfns_link)
+        else:
+          pfns_other.add(pfns_link)
       if "adler32" in site:
         site_adler32 = int(site["adler32"], 16)
         if adler32 is not None and adler32 != site_adler32:
           raise RuntimeError(f"Inconsistent adler32 sum for {file}")
         adler32 = site_adler32
+  pfns = list(pfns_disk)
+  if not disk_only:
+    pfns = list(pfns_disk) + list(pfns_other)
   if return_adler32:
     return pfns, adler32
   return pfns
 
-
-def copy_remote_file(input_remote_file, output_local_file, verbose=1):
-  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, verbose=verbose)
+def copy_remote_file(input_remote_file, output_local_file, n_retries=4, retry_sleep_interval=10, verbose=1):
+  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, verbose=verbose)
   if os.path.exists(output_local_file):
     if adler32 is not None and check_download(output_local_file, expected_adler32sum=adler32):
       return
@@ -210,28 +240,25 @@ def copy_remote_file(input_remote_file, output_local_file, verbose=1):
 
   if len(pfns_list) == 0:
     raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
-  for pfns in pfns_list:
-    try:
-      if verbose > 0:
-        print(f"Trying to copy file from {pfns}")
-      if pfns.startswith('root:'):
-        xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, prefixes=[''], verbose=verbose)
-        return
-      elif pfns.startswith('davs:'):
-        voms_info = get_voms_proxy_info()
-        webdav_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
-        return
-      elif pfns.startswith('srm:') or pfns.startswith('gsiftp'):
-        voms_info = get_voms_proxy_info()
-        gfal_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32)
-        return
-      else:
-        print('Skipping an unknown remote source "{pfns}".')
-    except (RuntimeError, ShCallError) as e:
-      if verbose > 0:
-        print(f"Failed to copy file from {pfns}. {e}")
 
-  raise RuntimeError(f'Unable to copy {input_remote_file} from remote.')
+  def download(pfns):
+    if verbose > 0:
+      print(f"Trying to copy file from {pfns}")
+    if pfns.startswith('root:'):
+      xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, n_retries=1, prefixes=[''], verbose=verbose)
+    # elif pfns.startswith('davs:'):
+    #   voms_info = get_voms_proxy_info()
+    #   webdav_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32, n_retries=1)
+    #   return
+    elif pfns.startswith('srm:') or pfns.startswith('gsiftp') or pfns.startswith('davs:'):
+      voms_info = get_voms_proxy_info()
+      gfal_copy(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32, n_retries=1)
+    else:
+      raise RuntimeError('Skipping an unknown remote source "{pfns}".')
+
+  repeat_until_success(download, opt_list=[ (pfns, ) for pfns in pfns_list ], raise_error=True,
+                       error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
+                       retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
 if __name__ == "__main__":
   import sys

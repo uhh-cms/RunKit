@@ -49,10 +49,13 @@ def submit(task: Task):
 
   config.Data.outLFNDirBase = task.crabOutput
 
-  if len(task.blacklist) != 0:
-    config.Site.blacklist = task.blacklist
-  if len(task.whitelist) != 0:
-    config.Site.whitelist = task.whitelist
+  blacklist = task.getBlackList()
+  if len(blacklist) != 0:
+    config.Site.blacklist = blacklist
+
+  whitelist = task.getWhiteList()
+  if len(whitelist) != 0:
+    config.Site.whitelist = whitelist
 
   config.JobType.pyCfgParams = task.getParams()
   config.Data.unitsPerJob = task.getUnitsPerJob()
@@ -60,6 +63,8 @@ def submit(task: Task):
   config.Data.lumiMask = task.getLumiMask()
   config.General.requestName = task.requestName()
   config.Data.inputDataset = task.inputDataset
+
+  config.Data.ignoreLocality = task.getIgnoreLocality()
 
   crabCommand('submit', config=config, dryrun=task.dryrun)
 

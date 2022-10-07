@@ -35,6 +35,10 @@ _job_report_fmt = '''
 </FrameworkJobReport>
 '''
 
+_cmssw_report = 'cmssw_report.xml'
+_final_report = 'FrameworkJobReport.xml'
+_tmp_report = _final_report + '.tmp'
+
 files_to_remove = []
 
 def make_job_report(exit_code, exit_message=''):
@@ -43,9 +47,9 @@ def make_job_report(exit_code, exit_message=''):
   else:
     error_msg = _error_msg_fmt.format(exit_code, exit_message)
   report_str = _job_report_fmt.format(error_msg)
-  with open('FrameworkJobReport.xml.tmp', 'w') as f:
+  with open(_tmp_report, 'w') as f:
     f.write(report_str)
-  shutil.move('FrameworkJobReport.xml.tmp', 'FrameworkJobReport.xml')
+  shutil.move(_tmp_report, _final_report)
 
 def exit(exit_code, exit_message=''):
   for file in files_to_remove:
@@ -53,7 +57,18 @@ def exit(exit_code, exit_message=''):
       os.remove(file)
     except:
       pass
-  make_job_report(exit_code, exit_message)
+  if exit_code == 0 and os.path.exists(_cmssw_report):
+    shutil.move(_cmssw_report, _final_report)
+  else:
+    make_job_report(exit_code, exit_message)
+
+def getFilePath(file):
+  if os.path.exists(file):
+    return file
+  file_name = os.path.basename(file)
+  if os.path.exists(file_name):
+    return file_name
+  raise RuntimeError(f"Unable to find {file}")
 
 def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_failed=None):
 
@@ -82,12 +97,19 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
       'cmsDriver.py', 'nano', '--fileout', f'file:{cmsDriver_out}', '--eventcontent', 'NANOAODSIM',
       '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
       f'--{p.exParams.sampleType.value()}', '--conditions', p.exParams.cond.value(),
-      '--era', f"{p.exParams.era.value()}", '-n', f'{p.maxEvents.input.value()}'
+      '--era', f"{p.exParams.era.value()}", '-n', f'{p.maxEvents.input.value()}', '--no_exec',
+      #'--customise_commands', 'process.Timing = cms.Service("Timing", summaryOnly=cms.untracked.bool(True))',
     ]
+
+    cmssw_cmd = [ 'cmsRun',  '-j', _cmssw_report, 'nano_NANO.py' ]
 
     customise = p.exParams.customisationFunction.value()
     if len(customise) > 0:
       cmd_base.extend(['--customise', customise])
+
+    customise_commands = p.exParams.customisationCommands.value()
+    if len(customise_commands) > 0:
+      cmd_base.extend(['--customise_commands', customise_commands])
 
     input_remote_files = list(p.source.fileNames)
     success = False
@@ -97,6 +119,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
       cmd = [ c for c in cmd_base ]
       cmd.extend(['--filein', ','.join(input_remote_files)])
       sh_call(cmd, verbose=1)
+      sh_call(cmssw_cmd, verbose=1)
       success = True
     except ShCallError as e:
       exception = e
@@ -125,6 +148,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
         cmd = [ c for c in cmd_base ]
         cmd.extend(['--filein', ','.join(input_files)])
         sh_call(cmd, verbose=1)
+        sh_call(cmssw_cmd, verbose=1)
         success = True
 
     if not success:
@@ -144,7 +168,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
 
     if 'processing_module' in skim_config:
       proc_module = skim_config['processing_module']
-      cmd_line.extend(['--processing-module', proc_module['file'] + ':' + proc_module['function']])
+      cmd_line.extend(['--processing-module', getFilePath(proc_module['file']) + ':' + proc_module['function']])
 
     if 'column_filters' in skim_config:
       columns = ','.join(skim_config['column_filters'])
@@ -161,7 +185,7 @@ def runJob(cmsDriver_out, final_out, run_cmsDriver=True, run_skim=None, store_fa
 
       if 'processing_module_for_failed' in skim_config:
         proc_module = skim_config['processing_module_for_failed']
-        cmd_line.extend(['--processing-module', proc_module['file'] + ':' + proc_module['function']])
+        cmd_line.extend(['--processing-module', getFilePath(proc_module['file']) + ':' + proc_module['function']])
 
       if 'column_filters_for_failed' in skim_config:
         columns = ','.join(skim_config['column_filters_for_failed'])

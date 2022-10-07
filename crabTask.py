@@ -1,21 +1,29 @@
+import datetime
 import json
 import os
 import re
 import shutil
+import sys
 
-from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  sys.path.append(os.path.dirname(file_dir))
+  __package__ = 'RunKit'
+
+from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler
 from .sh_tools import ShCallError, sh_call
 
 class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
-    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'dryrun', 'finalOutput', 'maxResubmitCount', 'maxRecoveryCount',
-    'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
+    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
+    'maxResubmitCount', 'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
+    'ignoreLocality'
   ]
 
   _taskCfgPrivateProperties = [
-    'name', 'inputDataset', 'recoveryIndex', 'taskIds',
+    'name', 'inputDataset', 'recoveryIndex', 'taskIds', 'lastJobStatusUpdate',
   ]
 
   inputLumiMaskJsonName = 'inputLumis'
@@ -48,6 +56,8 @@ class Task:
     self.vomsRole = ''
     self.blacklist = []
     self.whitelist = []
+    self.whitelistFinalRecovery = []
+    self.ignoreLocality = False
     self.dryrun = False
     self.recoveryIndex = 0
     self.maxResubmitCount = 0
@@ -61,6 +71,7 @@ class Task:
     self.fileRunLumi = None
     self.fileRepresentativeRunLumi = None
     self.taskIds = {}
+    self.lastJobStatusUpdate = -1.
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -80,6 +91,8 @@ class Task:
     if pName in cfg:
       pType = type(getattr(self, pName))
       pValue = cfg[pName]
+      if pType == float and type(pValue) == int:
+        pValue = float(pValue)
       if pType != type(pValue):
         raise RuntimeError(f'{self.name}: inconsistent config type for "{pName}". cfg value = "{pValue}"')
       if add:
@@ -133,9 +146,23 @@ class Task:
     return self.lumiMask
 
   def getMaxMemory(self):
-    if self.recoveryIndex > 0:
+    if self.recoveryIndex == self.maxRecoveryCount:
       return max(self.maxMemory, 4000)
     return self.maxMemory
+
+  def getWhiteList(self):
+    if self.recoveryIndex == self.maxRecoveryCount:
+      return self.whitelistFinalRecovery
+    return self.whitelist
+
+  def getBlackList(self):
+    return self.blacklist
+
+  def getIgnoreLocality(self):
+    if self.recoveryIndex == self.maxRecoveryCount:
+      return True
+    return self.ignoreLocality
+
 
   def getLocalJobArea(self, recoveryIndex=None):
     localArea = os.path.join(self.crabArea(recoveryIndex), 'local')
@@ -277,9 +304,10 @@ class Task:
       if file not in repRunLumi:
         raise RuntimeError(f'{self.name}: cannot find representative run-lumi for "{file}"')
       run, lumi = repRunLumi[file]
+      run = str(run)
       if run not in lumiMask:
-        lumiMask[str(run)] = []
-      lumiMask[str(run)].append([lumi, lumi])
+        lumiMask[run] = []
+      lumiMask[run].append([lumi, lumi])
     return lumiMask
 
   def selectJobIds(self, jobStatus, invert=False, recoveryIndex=None):
@@ -288,6 +316,13 @@ class Task:
       if (status == jobStatus and not invert) or (status != jobStatus and invert):
         jobIds.append(jobId)
     return jobIds
+
+  def getTimeSinceLastJobStatusUpdate(self):
+    if self.lastJobStatusUpdate <= 0:
+      return -1
+    now = datetime.datetime.now()
+    t = datetime.datetime.fromtimestamp(self.lastJobStatusUpdate)
+    return (now - t).total_seconds() / (60 * 60)
 
   def getTaskStatus(self, recoveryIndex=None):
     if recoveryIndex is None:
@@ -417,11 +452,29 @@ class Task:
   def updateStatus(self):
     returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                       catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout)
+    oldTaskStatus = self.taskStatus
     self.taskStatus = LogEntryParser.Parse(output)
     self.saveStatus()
     with open(self.lastCrabStatusLog(), 'w') as f:
       f.write('\n'.join(output))
     self.getTaskId()
+    if self.taskStatus.status_on_scheduler in [StatusOnScheduler.SUBMITTED, StatusOnScheduler.COMPLETED]:
+      self.getJobInputFiles()
+    now = datetime.datetime.now()
+    hasUpdates = self.lastJobStatusUpdate <= 0
+    if not hasUpdates:
+      jobStatus = self.taskStatus.get_job_status()
+      oldJobStatus = oldTaskStatus.get_job_status()
+      if len(jobStatus) != len(oldJobStatus):
+        hasUpdates = True
+      else:
+        for jobId, status in self.taskStatus.get_job_status().items():
+          if jobId not in oldJobStatus or status != oldJobStatus[jobId]:
+            hasUpdates = True
+            break
+    if hasUpdates:
+      self.lastJobStatusUpdate = now.timestamp()
+      self.saveCfg()
 
   def resubmit(self):
     retries = self.taskStatus.get_detailed_job_stat('Retries', JobStatus.failed)
@@ -466,6 +519,8 @@ class Task:
         raise RuntimeError(f"{self.name}: number of representative lumi sections != number of files to process.")
       shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
       self.recoveryIndex += 1
+      self.jobInputFiles = None
+      self.lastJobStatusUpdate = -1.
       with open(self.getLumiMask(), 'w') as f:
         json.dump(lumiMask, f)
       self.saveCfg()
@@ -488,6 +543,7 @@ class Task:
     return False
 
   def kill(self):
+    self.getJobInputFiles()
     sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout)
 
   def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):
@@ -518,7 +574,7 @@ class Task:
 
     filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration=includeNotFinishedFromLastIteration)
     if len(filesToProcess):
-      print(f'{self.name}: task in not complete. The following files still needs to be processed: {filesToProcess}')
+      print(f'{self.name}: task is not complete. The following files still needs to be processed: {filesToProcess}')
       return False
 
     processedFiles = set()
@@ -620,10 +676,10 @@ if __name__ == "__main__":
   workArea = sys.argv[1]
   task = Task.Load(workArea=workArea)
 
-  #ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
-  #print(f'{task.name}: {ok}')
+  # ok = "OK" if task.checkCompleteness(includeNotFinishedFromLastIteration=False) else "INCOMPLETE"
+  # print(f'{task.name}: {ok}')
   # print(task.getAllOutputPaths())
-  filesToProcess = task.getFilesToProcess(lastRecoveryIndex=1)
+  filesToProcess = task.getFilesToProcess()
   print(f'{task.name}: {len(filesToProcess)} {filesToProcess}')
   lumiMask = task.getRepresentativeLumiMask(filesToProcess)
   n_lumi = sum([ len(x) for _, x in lumiMask.items()])
