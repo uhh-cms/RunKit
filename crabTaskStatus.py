@@ -109,7 +109,9 @@ class LogEntryParser:
         task_status.status = Status.InProgress
       if task_status.status_on_server == StatusOnServer.KILLED:
         task_status.status = Status.WaitingForRecovery
-      if task_status.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ]:
+      if task_status.status_on_scheduler == StatusOnScheduler.FAILED:
+        task_status.status = Status.InProgress
+      if task_status.status_on_scheduler == StatusOnScheduler.FAILED_KILLED:
         task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
         task_status.status = Status.CrabFinished

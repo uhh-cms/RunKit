@@ -483,6 +483,9 @@ class Task:
     min_retries = min(retries.items(), key=lambda x: x[1])
     max_retries = max(retries.items(), key=lambda x: x[1])
     if min_retries[1] >= self.maxResubmitCount:
+      if self.taskStatus.status_on_scheduler == StatusOnScheduler.FAILED:
+        self.taskStatus.status = Status.WaitingForRecovery
+        self.saveStatus()
       return False
 
     report_str = f'{self.name}: resubmitting {len(retries)} failed jobs.'
