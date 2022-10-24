@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import psutil
 import re
 import subprocess
 import sys
@@ -48,7 +49,15 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
     kwargs['cwd'] = cwd
 
   proc = subprocess.Popen(cmd, **kwargs)
-  timer = Timer(timeout, proc.kill) if timeout is not None else None
+  def kill_proc():
+    print(f'\nTimeout is reached while running:\n\t{cmd_str}', file=sys.stderr)
+    print(f'Killing process tree...', file=sys.stderr)
+    print(f'Main process PID = {proc.pid}', file=sys.stderr)
+    main_proc = psutil.Process(proc.pid)
+    for child in main_proc.children(recursive=True):
+      child.kill()
+    main_proc.kill()
+  timer = Timer(timeout, kill_proc) if timeout is not None else None
   try:
     if timer is not None:
       timer.start()
