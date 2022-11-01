@@ -7,19 +7,21 @@ class Status(Enum):
   Defined = 0
   Submitted = 1
   Bootstrapped = 2
-  InProgress = 3
-  WaitingForRecovery = 4
-  WaitingForLocalRecovery = 5
-  CrabFinished = 6
-  PostProcessingFinished = 7
-  Failed = 8
+  TapeRecall = 3
+  InProgress = 4
+  WaitingForRecovery = 5
+  WaitingForLocalRecovery = 6
+  CrabFinished = 7
+  PostProcessingFinished = 8
+  Failed = 9
 
 class StatusOnServer(Enum):
   QUEUED = 1
-  SUBMITTED = 2
-  KILLED = 3
-  SUBMITFAILED = 4
-  RESUBMITFAILED = 5
+  TAPERECALL = 2
+  SUBMITTED = 3
+  KILLED = 4
+  SUBMITFAILED = 5
+  RESUBMITFAILED = 6
 
 class StatusOnScheduler(Enum):
   SUBMITTED = 1
@@ -105,6 +107,8 @@ class LogEntryParser:
           raise RuntimeError(f'Unknown log line {n} = "{log_lines[n]}".')
       if task_status.status_on_server == StatusOnServer.QUEUED:
         task_status.status = Status.Submitted
+      if task_status.status_on_server == StatusOnServer.TAPERECALL:
+        task_status.status = Status.TapeRecall
       if task_status.status_on_server == StatusOnServer.SUBMITTED:
         task_status.status = Status.InProgress
       if task_status.status_on_server == StatusOnServer.KILLED:
@@ -246,8 +250,9 @@ class LogEntryParser:
       return ((hh * 60) + mm) + ss
 
     runtime_str = log_lines[n + 2].strip()
-    match = re.match(r'^\* Runtime: ([0-9]+:[0-9]+:[0-9]+) min, ([0-9]+:[0-9]+:[0-9]+) max, ([0-9]+:[0-9]+:[0-9]+) ave$',
-                     runtime_str)
+    time_re = '-*([0-9]+:[0-9]+:[0-9]+)'
+    runtime_re = f'^\* Runtime: {time_re} min, {time_re} max, {time_re} ave$'
+    match = re.match(runtime_re, runtime_str)
     if match is None:
       raise RuntimeError(f'Invalid runtime stat = "{runtime_str}"')
     task_status.run_stat["Runtime"] = {

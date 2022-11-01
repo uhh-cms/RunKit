@@ -1,3 +1,4 @@
+import copy
 import datetime
 import json
 import os
@@ -90,7 +91,7 @@ class Task:
   def _setFromCfg(self, pName, cfg, add=False):
     if pName in cfg:
       pType = type(getattr(self, pName))
-      pValue = cfg[pName]
+      pValue = copy.deepcopy(cfg[pName])
       if pType == float and type(pValue) == int:
         pValue = float(pValue)
       if pType != type(pValue):

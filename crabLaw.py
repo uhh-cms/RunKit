@@ -23,7 +23,7 @@ class CrabNanoProdTaskPostProcess(HTCondorWorkflow, law.LocalWorkflow):
     branches = {}
     for task_id, task_name in enumerate(task_names):
       task = CrabTask.Load(mainWorkArea=self.work_area, taskName=task_name)
-      if task.taskStatus.status == Status.CrabFinished:
+      if task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished ]:
         branches[task_id] = (task.workArea, task.getPostProcessingDoneFlagFile())
     return branches
 
@@ -34,8 +34,10 @@ class CrabNanoProdTaskPostProcess(HTCondorWorkflow, law.LocalWorkflow):
   def run(self):
     work_area, done_flag = self.branch_data
     task = CrabTask.Load(workArea=work_area)
-    if task.taskStatus.status != Status.CrabFinished:
+    if task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished ]:
+      if task.taskStatus.status == Status.CrabFinished:
+        print(f'Post-processing {task.name}')
+        task.postProcessOutputs()
+      self.output().touch()
+    else:
       raise RuntimeError(f"task {task.name} is not ready for post-processing")
-    print(f'Post-processing {task.name}')
-    task.postProcessOutputs()
-    self.output().touch()

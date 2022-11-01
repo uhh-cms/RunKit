@@ -13,7 +13,7 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status, StatusOnServer, StatusOnScheduler
 from .crabTask import Task
-from .sh_tools import sh_call, get_voms_proxy_info
+from .sh_tools import ShCallError, sh_call, get_voms_proxy_info
 
 class TaskStat:
   summary_only_thr = 10
@@ -182,7 +182,7 @@ def check_prerequisites(main_cfg):
     raise RuntimeError("Law environment is not setup. It is needed to run post-processing.")
 
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
-                  update_cfg=False, no_loop=False):
+                  update_cfg=False, no_loop=False, task_selection=None, action=None):
   if not os.path.exists(work_area):
     os.makedirs(work_area)
   abs_work_area = os.path.abspath(work_area)
@@ -215,6 +215,40 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   with open(task_list_path, 'w') as f:
     json.dump([task_name for task_name in tasks], f, indent=2)
 
+  if action is not None:
+    selected_tasks = []
+    for task_name, task in tasks.items():
+      if task_selection is None or eval(task_selection):
+        selected_tasks.append(task)
+
+    if action == 'print':
+      for task in selected_tasks:
+        print(task.name)
+    elif action == 'kill':
+      for task in selected_tasks:
+        print(f'{task.name}: sending kill request...')
+        try:
+          task.kill()
+        except ShCallError as e:
+          print(f'{task.name}: error sending kill request. {e}')
+    elif action == 'remove':
+      for task in selected_tasks:
+        print(f'{task.name}: removing...')
+        shutil.rmtree(task.workArea)
+        del tasks[task.name]
+      with open(task_list_path, 'w') as f:
+        json.dump([task_name for task_name in tasks], f, indent=2)
+    elif action == 'remove_final_output':
+      for task in selected_tasks:
+        task_output = task.getFinalOutput()
+        print(f'{task.name}: removing final output "{task_output}"...')
+        if os.path.exists(task_output):
+          shutil.rmtree(task_output)
+    else:
+      raise RuntimeError(f'Unknown action = "{action}"')
+
+    return
+
   for name, task in tasks.items():
     task.checkConfigurationValidity()
 
@@ -223,18 +257,25 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   else:
     update_interval = 60
 
+
   while True:
     last_update = datetime.datetime.now()
     to_post_process = update(tasks, no_status_update=no_status_update)
     if len(to_post_process) > 0 and 'postProcessing' in main_cfg:
       print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
       postproc_params = main_cfg['postProcessing']
+      law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
+      law_task_dir = os.path.join(law_sub_dir, postproc_params['lawTask'])
+
+      if os.path.exists(law_task_dir):
+        shutil.rmtree(law_task_dir)
+
       cmd = [ 'law', 'run', postproc_params['lawTask'],
               '--workflow', postproc_params['workflow'],
               '--bootstrap-path', postproc_params['bootstrap'],
               '--work-area', abs_work_area,
               '--log-path', os.path.join(abs_work_area, 'law', 'logs'),
-              '--sub-dir', os.path.join(abs_work_area, 'law', 'jobs') ]
+              '--sub-dir', law_sub_dir ]
       if 'requirements' in postproc_params:
         cmd.extend(['--requirements', postproc_params['requirements']])
       sh_call(cmd)
@@ -272,9 +313,13 @@ if __name__ == "__main__":
   parser.add_argument('--no-status-update', action="store_true", help="Do not update tasks statuses.")
   parser.add_argument('--update-cfg', action="store_true", help="Update task configs.")
   parser.add_argument('--no-loop', action="store_true", help="Run task update once and exit.")
+  parser.add_argument('--select', required=False, type=str, default=None,
+                      help="select tasks to which apply an action. Default: select all.")
+  parser.add_argument('--action', required=False, type=str, default=None,
+                      help="apply action on selected tasks and exit")
   parser.add_argument('--verbose', required=False, type=int, default=1, help="verbosity level")
   parser.add_argument('task_file', type=str, nargs='*', help="file(s) with task descriptions")
   args = parser.parse_args()
 
   overseer_main(args.work_area, args.cfg, args.task_file, verbose=args.verbose, no_status_update=args.no_status_update,
-                update_cfg=args.update_cfg, no_loop=args.no_loop)
+                update_cfg=args.update_cfg, no_loop=args.no_loop, task_selection=args.select, action=args.action)
