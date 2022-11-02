@@ -27,6 +27,7 @@ class TaskStat:
     self.unknown = []
     self.waiting_for_recovery = []
     self.failed = []
+    self.tape_recall = []
     self.max_inactivity = None
 
   def add(self, task):
@@ -51,6 +52,8 @@ class TaskStat:
       self.waiting_for_recovery.append(task)
     if task.taskStatus.status == Status.Failed:
       self.failed.append(task)
+    if task.taskStatus.status == Status.TapeRecall:
+      self.tape_recall.append(task)
 
 
   def report(self):
@@ -94,9 +97,13 @@ class TaskStat:
     if len(self.waiting_for_recovery) > 0:
       names = [ task.name for task in self.waiting_for_recovery ]
       print(f"Tasks waiting for recovery: {', '.join(names)}")
+    if len(self.tape_recall) > 0:
+      names = [ task.name for task in self.tape_recall ]
+      print(f"Tasks waiting for a tape recall to complete: {', '.join(names)}")
     if len(self.failed) > 0:
       names = [ task.name for task in self.failed ]
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
+
 
 def timestamp_str():
   t = datetime.datetime.now()
@@ -149,11 +156,11 @@ def update(tasks, no_status_update=False):
       if task.taskStatus.status.value < Status.WaitingForRecovery.value and not no_status_update:
         task.updateStatus()
       if task.taskStatus.status == Status.WaitingForRecovery:
-        if task.taskStatus.status_on_server == StatusOnServer.SUBMITFAILED:
-          task.recoverLocal()
-        elif task.taskStatus.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ] \
+        if task.taskStatus.status_on_server == StatusOnServer.SUBMITFAILED \
+              or task.taskStatus.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ] \
               or not task.resubmit():
-          task.recover()
+          if not task.recover():
+            task.recoverLocal()
       else:
         if task.hasFailedJobs():
           task.resubmit()
@@ -224,6 +231,17 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     if action == 'print':
       for task in selected_tasks:
         print(task.name)
+    elif action.startswith('run_cmd'):
+      cmd = action[len('run_cmd') + 1:]
+      for task in selected_tasks:
+        exec(cmd)
+        task.saveCfg()
+        task.saveStatus()
+    elif action == 'list_files_to_process':
+      for task in selected_tasks:
+        print(f'{task.name}: files to process')
+        for file in task.getFilesToProcess():
+          print(f'  {file}')
     elif action == 'kill':
       for task in selected_tasks:
         print(f'{task.name}: sending kill request...')

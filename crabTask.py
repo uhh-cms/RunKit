@@ -11,7 +11,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler
+from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .sh_tools import ShCallError, sh_call
 
 class Task:
@@ -190,17 +190,20 @@ class Task:
       recoveryIndex = self.recoveryIndex
     if recoveryIndex == self.recoveryIndex and self.jobInputFiles is not None:
       return self.jobInputFiles
+
     jsonPath = os.path.join(self.crabArea(recoveryIndex), 'job_input_files.json')
     if not os.path.exists(jsonPath):
-      txtPath = self.getJobInputFilesTxtPath(recoveryIndex)
       jobInputFiles = {}
-      for fileName in os.listdir(txtPath):
-        jobIdMatch = re.match(r'^job_input_file_list_(.*)\.txt$', fileName)
-        if jobIdMatch is None:
-          raise RuntimeError(f'Unable to extract job id from "{jobIdMatch}"')
-        jobId = jobIdMatch.group(1)
-        with open(os.path.join(txtPath, fileName), 'r') as f:
-          jobInputFiles[jobId] = json.load(f)
+      taskStatus = self.getTaskStatus(recoveryIndex=recoveryIndex)
+      if taskStatus.status_on_server != StatusOnServer.SUBMITFAILED:
+        txtPath = self.getJobInputFilesTxtPath(recoveryIndex)
+        for fileName in os.listdir(txtPath):
+          jobIdMatch = re.match(r'^job_input_file_list_(.*)\.txt$', fileName)
+          if jobIdMatch is None:
+            raise RuntimeError(f'Unable to extract job id from "{jobIdMatch}"')
+          jobId = jobIdMatch.group(1)
+          with open(os.path.join(txtPath, fileName), 'r') as f:
+            jobInputFiles[jobId] = json.load(f)
       with open(jsonPath, 'w') as f:
         json.dump(jobInputFiles, f, indent=2)
     else:
@@ -338,13 +341,7 @@ class Task:
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
     if recoveryIndex not in self.taskIds:
-      if recoveryIndex != self.recoveryIndex:
-        statusPath = os.path.join(self.workArea, f'status_{recoveryIndex}.json')
-        with open(statusPath, 'r') as f:
-          taskStatus = CrabTaskStatus.from_json(f.read())
-      else:
-        taskStatus = self.taskStatus
-      self.taskIds[recoveryIndex] = taskStatus.task_id()
+      self.taskIds[recoveryIndex] = self.getTaskStatus(recoveryIndex=recoveryIndex).task_id()
       self.saveCfg()
     return self.taskIds[recoveryIndex]
 
