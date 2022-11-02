@@ -1,7 +1,6 @@
 import datetime
 import json
 import os
-import psutil
 import re
 import subprocess
 import sys
@@ -48,16 +47,25 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
   if cwd is not None:
     kwargs['cwd'] = cwd
 
+  # psutil.Process.children does not work.
+  def kill_proc(pid):
+    child_list = subprocess.run(['ps', 'h', '--ppid', str(pid)], capture_output=True, encoding="utf-8")
+    for line in child_list.stdout.split('\n'):
+      child_info = line.split(' ')
+      child_info = [ s for s in child_info if len(s) > 0 ]
+      if len(child_info) > 0:
+        child_pid = child_info[0]
+        kill_proc(child_pid)
+    subprocess.run(['kill', '-9', str(pid)], capture_output=True)
+
   proc = subprocess.Popen(cmd, **kwargs)
-  def kill_proc():
+  def kill_main_proc():
     print(f'\nTimeout is reached while running:\n\t{cmd_str}', file=sys.stderr)
     print(f'Killing process tree...', file=sys.stderr)
     print(f'Main process PID = {proc.pid}', file=sys.stderr)
-    main_proc = psutil.Process(proc.pid)
-    for child in main_proc.children(recursive=True):
-      child.kill()
-    main_proc.kill()
-  timer = Timer(timeout, kill_proc) if timeout is not None else None
+    kill_proc(proc.pid)
+
+  timer = Timer(timeout, kill_main_proc) if timeout is not None else None
   try:
     if timer is not None:
       timer.start()
