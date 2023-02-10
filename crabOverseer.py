@@ -122,7 +122,6 @@ def sanity_checks(task):
       task.kill()
       return False
 
-
     job_states = sorted(task.taskStatus.job_stat.keys(), key=lambda x: x.value)
     ref_states = [ JobStatus.running, JobStatus.finished, JobStatus.failed ]
     if len(job_states) <= len(ref_states) and job_states == ref_states[:len(job_states)]:
@@ -149,38 +148,79 @@ def update(tasks, no_status_update=False):
   print(timestamp_str() + "Updating...")
   stat = TaskStat()
   to_post_process = []
+  to_run_locally = []
   for task_name, task in tasks.items():
     if task.taskStatus.status == Status.Defined:
-      task.submit()
+      if task.submit():
+        to_run_locally.append(task)
     elif task.taskStatus.status.value < Status.CrabFinished.value:
       if task.taskStatus.status.value < Status.WaitingForRecovery.value and not no_status_update:
-        task.updateStatus()
+        if task.updateStatus():
+          to_run_locally.append(task)
       if task.taskStatus.status == Status.WaitingForRecovery:
-        if task.taskStatus.status_on_server == StatusOnServer.SUBMITFAILED \
-              or task.taskStatus.status_on_scheduler in [ StatusOnScheduler.FAILED, StatusOnScheduler.FAILED_KILLED ] \
-              or not task.resubmit():
-          if not task.recover():
-            task.recoverLocal()
-      else:
-        if task.hasFailedJobs():
-          task.resubmit()
+        if task.recover():
+          to_run_locally.append(task)
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
-        task.preparePostProcessLists()
+        task.preparePostProcessList()
         done_flag = task.getPostProcessingDoneFlagFile()
         if os.path.exists(done_flag):
           os.remove(done_flag)
         to_post_process.append(task)
       else:
-        task.recover()
+        if task.recover():
+          to_run_locally.append(task)
     stat.add(task)
   stat.report()
-  return to_post_process
+  return to_post_process, to_run_locally
+
+def apply_action(action, tasks, task_selection, task_list_path):
+  selected_tasks = []
+  for task_name, task in tasks.items():
+    if task_selection is None or eval(task_selection):
+      selected_tasks.append(task)
+
+  if action == 'print':
+    for task in selected_tasks:
+      print(task.name)
+  elif action.startswith('run_cmd'):
+    cmd = action[len('run_cmd') + 1:]
+    for task in selected_tasks:
+      exec(cmd)
+      task.saveCfg()
+      task.saveStatus()
+  elif action == 'list_files_to_process':
+    for task in selected_tasks:
+      print(f'{task.name}: files to process')
+      for file in task.getFilesToProcess():
+        print(f'  {file}')
+  elif action == 'kill':
+    for task in selected_tasks:
+      print(f'{task.name}: sending kill request...')
+      try:
+        task.kill()
+      except ShCallError as e:
+        print(f'{task.name}: error sending kill request. {e}')
+  elif action == 'remove':
+    for task in selected_tasks:
+      print(f'{task.name}: removing...')
+      shutil.rmtree(task.workArea)
+      del tasks[task.name]
+    with open(task_list_path, 'w') as f:
+      json.dump([task_name for task_name in tasks], f, indent=2)
+  elif action == 'remove_final_output':
+    for task in selected_tasks:
+      task_output = task.getFinalOutput()
+      print(f'{task.name}: removing final output "{task_output}"...')
+      if os.path.exists(task_output):
+        shutil.rmtree(task_output)
+  else:
+    raise RuntimeError(f'Unknown action = "{action}"')
 
 def check_prerequisites(main_cfg):
-  if 'CRABCLIENT_TYPE' not in os.environ or len(os.environ['CRABCLIENT_TYPE'].strip()) == 0:
-    raise RuntimeError("Crab environment is not set. Please source /cvmfs/cms.cern.ch/common/crab-setup.sh")
+  # if 'CRABCLIENT_TYPE' not in os.environ or len(os.environ['CRABCLIENT_TYPE'].strip()) == 0:
+  #   raise RuntimeError("Crab environment is not set. Please source /cvmfs/cms.cern.ch/common/crab-setup.sh")
   voms_info = get_voms_proxy_info()
   if 'timeleft' not in voms_info or voms_info['timeleft'] < 1:
     raise RuntimeError('Voms proxy is not initalised or is going to expire soon.' + \
@@ -209,78 +249,37 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       task_names = json.load(f)
       for task_name in task_names:
         tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
-  for task_list_file in new_task_list_files:
-    with open(task_list_file, 'r') as f:
-      new_tasks = yaml.safe_load(f)
-    for task_name in new_tasks:
-      if task_name == 'config': continue
-      if task_name in tasks:
-        if update_cfg:
-          tasks[task_name].updateConfig(main_cfg, new_tasks)
-      else:
-        tasks[task_name] = Task.Create(work_area, main_cfg, new_tasks, task_name)
-  with open(task_list_path, 'w') as f:
-    json.dump([task_name for task_name in tasks], f, indent=2)
+  if len(new_task_list_files) > 0:
+    for task_list_file in new_task_list_files:
+      with open(task_list_file, 'r') as f:
+        new_tasks = yaml.safe_load(f)
+      for task_name in new_tasks:
+        if task_name == 'config': continue
+        if task_name in tasks:
+          if update_cfg:
+            tasks[task_name].updateConfig(main_cfg, new_tasks)
+        else:
+          tasks[task_name] = Task.Create(work_area, main_cfg, new_tasks, task_name)
+    with open(task_list_path, 'w') as f:
+      json.dump(list(tasks.keys()), f, indent=2)
 
   if action is not None:
-    selected_tasks = []
-    for task_name, task in tasks.items():
-      if task_selection is None or eval(task_selection):
-        selected_tasks.append(task)
-
-    if action == 'print':
-      for task in selected_tasks:
-        print(task.name)
-    elif action.startswith('run_cmd'):
-      cmd = action[len('run_cmd') + 1:]
-      for task in selected_tasks:
-        exec(cmd)
-        task.saveCfg()
-        task.saveStatus()
-    elif action == 'list_files_to_process':
-      for task in selected_tasks:
-        print(f'{task.name}: files to process')
-        for file in task.getFilesToProcess():
-          print(f'  {file}')
-    elif action == 'kill':
-      for task in selected_tasks:
-        print(f'{task.name}: sending kill request...')
-        try:
-          task.kill()
-        except ShCallError as e:
-          print(f'{task.name}: error sending kill request. {e}')
-    elif action == 'remove':
-      for task in selected_tasks:
-        print(f'{task.name}: removing...')
-        shutil.rmtree(task.workArea)
-        del tasks[task.name]
-      with open(task_list_path, 'w') as f:
-        json.dump([task_name for task_name in tasks], f, indent=2)
-    elif action == 'remove_final_output':
-      for task in selected_tasks:
-        task_output = task.getFinalOutput()
-        print(f'{task.name}: removing final output "{task_output}"...')
-        if os.path.exists(task_output):
-          shutil.rmtree(task_output)
-    else:
-      raise RuntimeError(f'Unknown action = "{action}"')
-
+    apply_action(action, tasks, task_selection, task_list_path)
     return
 
   for name, task in tasks.items():
     task.checkConfigurationValidity()
 
-  if 'updateInterval' in main_cfg:
-    update_interval = main_cfg['updateInterval']
-  else:
-    update_interval = 60
-
+  update_interval = main_cfg.get('updateInterval', 60)
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process = update(tasks, no_status_update=no_status_update)
-    if len(to_post_process) > 0 and 'postProcessing' in main_cfg:
-      print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
+    to_post_process, to_run_locally = update(tasks, no_status_update=no_status_update)
+    if len(to_run_locally) > 0 or len(to_post_process) > 0:
+      if len(to_run_locally) > 0:
+        print(timestamp_str() + "To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
+      if len(to_post_process) > 0:
+        print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
       postproc_params = main_cfg['postProcessing']
       law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
       law_task_dir = os.path.join(law_sub_dir, postproc_params['lawTask'])
@@ -297,9 +296,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       if 'requirements' in postproc_params:
         cmd.extend(['--requirements', postproc_params['requirements']])
       sh_call(cmd)
-      for task in to_post_process:
+      for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
-      print(timestamp_str() + "Post-processing iteration finished.")
+      print(timestamp_str() + "Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
       if not ((task.taskStatus.status == Status.CrabFinished and 'postProcessing' not in main_cfg) \
