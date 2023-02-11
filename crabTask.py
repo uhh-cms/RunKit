@@ -188,7 +188,7 @@ class Task:
       cmssw_path = os.environ['DEFAULT_CMSSW_BASE']
       self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True)
       self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
-      self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.work_dir
+      self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
     return self.cmsswEnv
 
   # def getLocalJobArea(self, recoveryIndex=None):
@@ -527,7 +527,7 @@ class Task:
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
       for job_id in self.getGridJobs():
-        self.taskStatus.details[job_id] = { "State": "idle" }
+        self.taskStatus.details[str(job_id)] = { "State": "idle" }
       self.saveStatus()
       return True
     else:
@@ -550,8 +550,11 @@ class Task:
     oldTaskStatus = self.taskStatus
     if self.isInputDatasetLocal() or self.recoveryIndex == self.maxRecoveryCount:
       for job_id in self.getGridJobs():
-        if os.path.exists(self.getGridJobDoneFlagFile(job_id)):
-          self.taskStatus.details[job_id]["State"] = "finished"
+        job_flag_file = self.getGridJobDoneFlagFile(job_id)
+        if os.path.exists(job_flag_file):
+          with open(job_flag_file, 'r') as f:
+            job_status = f.read().strip()
+          self.taskStatus.details[str(job_id)]["State"] = job_status
       jobIds = self.selectJobIds(JobStatus.finished, invert=True)
       if len(jobIds) == 0:
         self.taskStatus.status = Status.CrabFinished
@@ -655,7 +658,7 @@ class Task:
     if self.gridJobs is None:
       if os.path.exists(self.gridJobsFile()):
         with open(self.gridJobsFile(), 'r') as f:
-          self.gridJobs = json.load(f)
+          self.gridJobs = { int(key) : value for key,value in json.load(f).items() }
       else:
         self.gridJobs = {}
         job_id = 0
@@ -678,15 +681,20 @@ class Task:
     if not os.path.exists(job_home):
       os.makedirs(job_home)
 
+    ana_path = os.environ['ANALYSIS_PATH']
     for file in self.getFilesToTransfer(appendDatasetFiles=False):
-      shutil.copy(file, job_home)
-    cmd = [ 'python3', os.path.abspath(self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
+      shutil.copy(os.path.join(ana_path, file), job_home)
+    cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
             'writePSet=True', 'mustProcessAllInputs=True' ]
     cmd.extend(self.getParams(appendDatasetFiles=False))
-    file_list = ','.join(self.getGridJobs()[job_id])
+    file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
+    if len(file_list) == 0:
+      return False
+    file_list = ','.join(file_list)
     cmd.append(f'inputFiles={file_list}')
     sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
-    sh_call([ os.path.abspath(self.scriptExe) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+    _, scriptName = os.path.split(self.scriptExe)
+    sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
     output_path = self.getTaskOutputPath()
     if not os.path.exists(output_path):
       os.makedirs(output_path)
@@ -696,6 +704,7 @@ class Task:
     out_name, out_ext = os.path.splitext(self.getCrabJobOutput())
     final_output = os.path.join(output_path, f'{out_name}_{job_id}{out_ext}')
     shutil.move(job_output, final_output)
+    return True
 
   def kill(self):
     if self.isInputDatasetLocal() or self.recoveryIndex == self.maxRecoveryCount:
@@ -777,6 +786,11 @@ class Task:
       inputDataset = taskCfg[taskName]
     if inputDataset != self.inputDataset:
       raise RuntimeError(f'{self.name}: change of input dataset is not possible')
+    for job_id in self.getGridJobs():
+      if self.taskStatus.details[str(job_id)]["State"] == "failed":
+        job_flag_file = self.getGridJobDoneFlagFile(job_id)
+        if os.path.exists(job_flag_file):
+          os.remove(job_flag_file)
 
     self.saveCfg()
     if self.taskStatus.status == Status.Failed:

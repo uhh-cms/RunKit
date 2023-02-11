@@ -40,7 +40,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
         job_id += 1
       else:
         for grid_job_id in task.getGridJobs():
-          branches[job_id] = (task.workArea, grid_job_id, task.getGridJobDoneFlagFile(job_id))
+          branches[job_id] = (task.workArea, grid_job_id, task.getGridJobDoneFlagFile(grid_job_id))
           job_id += 1
     return branches
 
@@ -62,7 +62,10 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
     else:
       print(f'Running {task.name} job_id = {grid_job_id}')
       job_home, remove_job_home = self.law_job_home()
-      task.runJobLocally(grid_job_id, job_home)
+      result = task.runJobLocally(grid_job_id, job_home)
+      state_str = 'finished' if result else 'failed'
       if remove_job_home:
         shutil.rmtree(job_home)
-      self.output().touch()
+      with self.output().open('w') as output:
+        output.write(state_str)
+
