@@ -31,7 +31,7 @@ def submit(task: Task):
   if len(task.scriptExe) > 0:
     config.JobType.scriptExe = task.scriptExe
   config.JobType.inputFiles = task.getFilesToTransfer()
-  config.JobType.outputFiles = task.getCrabJobOutput()
+  config.JobType.outputFiles = [ task.getCrabJobOutput() ]
 
   config.Data.inputDBS = task.inputDBS
   config.Data.allowNonValidInputDataset = task.allowNonValid

@@ -11,7 +11,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .crabTaskStatus import JobStatus, Status, StatusOnServer, StatusOnScheduler
+from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .sh_tools import ShCallError, sh_call, get_voms_proxy_info
 

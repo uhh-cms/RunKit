@@ -18,12 +18,16 @@ options.register('createTar', True, VarParsing.multiplicity.singleton, VarParsin
                  "Create a tar file with all outputs.")
 options.register('maxRuntime', 20, VarParsing.multiplicity.singleton, VarParsing.varType.int,
                  "Maximal expected job runtime in hours.")
+options.register('maxFiles', -1, VarParsing.multiplicity.singleton, VarParsing.varType.int,
+                 "Maximal number of files to process.")
 options.register('customise', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Production customization code (if any)")
 options.register('customiseCmds', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Production customization commands (if any)")
 options.register('writePSet', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Dump configuration into PSet.py.")
+options.register('copyInputsToLocal', True, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
+                 "Copy inputs (one at the time) to a job working directory before processing them.")
 options.register('output', 'nano.root', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Name of the output file.")
 options.register('datasetFiles', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -68,6 +72,8 @@ process.exParams = cms.untracked.PSet(
   jobModule = cms.untracked.string('crabJob_nanoProd.py'),
   output = cms.untracked.string(options.output),
   datasetFiles = cms.untracked.string(options.datasetFiles),
+  maxFiles = cms.untracked.int32(options.maxFiles),
+  copyInputsToLocal = cms.untracked.bool(options.copyInputsToLocal),
 )
 
 if options.writePSet:

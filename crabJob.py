@@ -107,7 +107,7 @@ def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, para
   tmp_files = []
   exception = None
   try:
-    if input_file.startswith('file:'):
+    if input_file.startswith('file:') or not params.copyInputsToLocal:
       module_input_file = input_file
       local_file = None
     else:
@@ -154,6 +154,8 @@ def runJob(cmd_line_args):
   output_files = []
   for file_index, file in enumerate(list(PSet.process.source.fileNames)):
     if not cfg_params.mustProcessAllInputs and projectTime(timestamps) > cfg_params.maxRuntime:
+      break
+    if cfg_params.maxFiles > 0 and file_index >= cfg_params.maxFiles:
       break
     file_id = datasetFiles[file] if datasetFiles else file_index
     output_file = f'{outputFileBase}_{file_id}{outputExt}'

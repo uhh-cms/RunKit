@@ -135,7 +135,7 @@ class Task:
   def getParams(self, appendDatasetFiles=True):
     params = [ f'{key}={value}' for key,value in self.params.items() ]
     if appendDatasetFiles:
-      datasetFileDir, datasetFileName = self.getDatasetFilesPath()
+      datasetFileDir, datasetFileName = os.path.split(self.getDatasetFilesPath())
       params.append(f'datasetFiles={datasetFileName}')
     return params
 
@@ -522,6 +522,7 @@ class Task:
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
   def submit(self):
+    self.getDatasetFiles()
     if self.isInputDatasetLocal() or self.recoveryIndex == self.maxRecoveryCount:
       self.taskStatus.status = Status.Submitted
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
@@ -535,7 +536,8 @@ class Task:
       if self.recoveryIndex == 0:
         print(f'{self.name}: submitting ...')
       try:
-        sh_call(['python3', crabSubmitPath, self.workArea], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv())
+        timeout = None if self.dryrun else Task.crabOperationTimeout
+        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv())
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
       except ShCallError as e:

@@ -1,5 +1,5 @@
+import shutil
 import os
-import sys
 import yaml
 
 from sh_tools import sh_call
@@ -35,7 +35,7 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
   if run_cmsDriver:
     n_threads = 1
     cmsDrive_cmd = [
-      'cmsDriver.py', 'nano', '--filein', input_file, '--fileout', f'file:{cmsDriver_out}',
+      'cmsDriver.py', 'nano', '--filein', input_file, '--fileout', f'file:{output_file}',
       '--eventcontent', 'NANOAODSIM', '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
       f'--{cfg_params.sampleType}', '--conditions', cfg_params.cond,
       '--era', f"{cfg_params.era}", '-n', f'{cfg_params.maxEvents}', '--no_exec',
@@ -53,6 +53,9 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
 
     sh_call(cmsDrive_cmd, verbose=1)
     sh_call(cmssw_cmd, verbose=1)
+
+    shutil.move(output_file, cmsDriver_out)
+
 
   skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
   if run_skim:
