@@ -75,10 +75,22 @@ if args.input_range is not None:
     df = df.Range(begin, end)
 
 if args.processing_module is not None:
-    module_desc = args.processing_module.split(':')
-    import imp
-    module = imp.load_source('processing', module_desc[0])
-    fn = getattr(module, module_desc[1])
+    import importlib
+    import sys
+    module_path, module_fn = args.processing_module.split(':')
+    module_path = os.path.abspath(module_path)
+    module_dir, module_file = os.path.split(module_path)
+    module_name, _ = os.path.splitext(module_file)
+    package_dir, package_name = os.path.split(module_dir)
+    if len(package_dir) > 0 and package_dir not in sys.path:
+        sys.path.append(package_dir)
+    if len(package_name) == 0:
+        package_name = module_name
+    spec = importlib.util.spec_from_file_location(f'{package_name}.{module_name}', module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    fn = getattr(module, module_fn)
     df = fn(df)
 
 def name_match(column, pattern):

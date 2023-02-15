@@ -10,6 +10,14 @@ def getFilePath(file):
   file_name = os.path.basename(file)
   if os.path.exists(file_name):
     return file_name
+  if 'ANALYSIS_PATH' in os.environ:
+    file_path = os.path.join(os.environ['ANALYSIS_PATH'], file)
+    if os.path.exists(file_path):
+      return file_path
+  if 'CMSSW_BASE' in os.environ:
+    file_path = os.path.join(os.environ['CMSSW_BASE'], 'src', file)
+    if os.path.exists(file_path):
+      return file_path
   raise RuntimeError(f"Unable to find {file}")
 
 def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
