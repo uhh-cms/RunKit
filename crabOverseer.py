@@ -225,8 +225,8 @@ def check_prerequisites(main_cfg):
   if 'timeleft' not in voms_info or voms_info['timeleft'] < 1:
     raise RuntimeError('Voms proxy is not initalised or is going to expire soon.' + \
                        ' Please run "voms-proxy-init -voms cms -rfc -valid 192:00".')
-  if 'postProcessing' in main_cfg and 'LAW_HOME' not in os.environ:
-    raise RuntimeError("Law environment is not setup. It is needed to run post-processing.")
+  if 'localProcessing' not in main_cfg or 'LAW_HOME' not in os.environ:
+    raise RuntimeError("Law environment is not setup. It is needed to run the local processing step.")
 
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
                   update_cfg=False, no_loop=False, task_selection=None, action=None):
@@ -280,30 +280,28 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         print(timestamp_str() + "To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
         print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
-      postproc_params = main_cfg['postProcessing']
+      local_proc_params = main_cfg['localProcessing']
       law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
-      law_task_dir = os.path.join(law_sub_dir, postproc_params['lawTask'])
+      law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
 
       if os.path.exists(law_task_dir):
         shutil.rmtree(law_task_dir)
 
-      cmd = [ 'law', 'run', postproc_params['lawTask'],
-              '--workflow', postproc_params['workflow'],
-              '--bootstrap-path', postproc_params['bootstrap'],
+      cmd = [ 'law', 'run', local_proc_params['lawTask'],
+              '--workflow', local_proc_params['workflow'],
+              '--bootstrap-path', local_proc_params['bootstrap'],
               '--work-area', abs_work_area,
               '--log-path', os.path.join(abs_work_area, 'law', 'logs'),
               '--sub-dir', law_sub_dir ]
-      if 'requirements' in postproc_params:
-        cmd.extend(['--requirements', postproc_params['requirements']])
+      if 'requirements' in local_proc_params:
+        cmd.extend(['--requirements', local_proc_params['requirements']])
       sh_call(cmd)
       for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
       print(timestamp_str() + "Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
-      if not ((task.taskStatus.status == Status.CrabFinished and 'postProcessing' not in main_cfg) \
-              or task.taskStatus.status == Status.PostProcessingFinished \
-              or task.taskStatus.status == Status.Failed ):
+      if task.taskStatus.status not in [ Status.PostProcessingFinished, Status.Failed ]:
         has_unfinished = True
         break
 
