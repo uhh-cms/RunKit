@@ -139,8 +139,10 @@ class Task:
   def isInputDatasetLocal(self):
     return self.inputDataset.startswith('local:')
 
-  def isInLocalRunMode(self):
-    return self.isInputDatasetLocal() or self.recoveryIndex == self.maxRecoveryCount
+  def isInLocalRunMode(self, recoveryIndex=None):
+    if recoveryIndex is None:
+      recoveryIndex = self.recoveryIndex
+    return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
 
   def getUnitsPerJob(self):
     if self.recoveryIndex >= self.maxRecoveryCount - 1:
@@ -360,7 +362,7 @@ class Task:
   def getTaskOutputPath(self, recoveryIndex=None):
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
-    if self.isInLocalRunMode():
+    if self.isInLocalRunMode(recoveryIndex=recoveryIndex):
       return os.path.join(self.localCrabOutput, 'local_' + self.requestName())
     else:
       datasetParts = [ s for s in self.inputDataset.split('/') if len(s) > 0 ]
@@ -474,6 +476,7 @@ class Task:
   def submit(self):
     self.getDatasetFiles()
     if self.isInLocalRunMode():
+      self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.Submitted
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
@@ -546,7 +549,14 @@ class Task:
       self.saveStatus()
       return False
 
-    if self.isInLocalRunMode():
+    if self.isInLocalRunMode(recoveryIndex=self.recoveryIndex+1):
+      if self.recoveryIndex == self.maxRecoveryCount - 1:
+        shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
+        self.recoveryIndex += 1
+        self.jobInputFiles = None
+        self.lastJobStatusUpdate = -1.
+        self.saveCfg()
+        self.submit()
       return True
 
     jobIds = self.selectJobIds([JobStatus.finished], invert=True)
