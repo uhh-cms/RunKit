@@ -694,7 +694,8 @@ class Task:
     if inputDataset != self.inputDataset:
       raise RuntimeError(f'{self.name}: change of input dataset is not possible')
     for job_id in self.getGridJobs():
-      if self.taskStatus.details[str(job_id)]["State"] == "failed":
+      job_id = str(job_id)
+      if job_id in self.taskStatus.details and self.taskStatus.details[job_id]["State"] == "failed":
         job_flag_file = self.getGridJobDoneFlagFile(job_id)
         if os.path.exists(job_flag_file):
           os.remove(job_flag_file)
