@@ -504,12 +504,18 @@ class Task:
     neen_local_run = False
     oldTaskStatus = self.taskStatus
     if self. isInLocalRunMode():
+      self.taskStatus = CrabTaskStatus()
+      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
+      self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
       for job_id in self.getGridJobs():
         job_flag_file = self.getGridJobDoneFlagFile(job_id)
         if os.path.exists(job_flag_file):
           with open(job_flag_file, 'r') as f:
             job_status = f.read().strip()
-          self.taskStatus.details[str(job_id)]["State"] = job_status
+        else:
+          job_status = "idle"
+        self.taskStatus.details[str(job_id)] = { "State": job_status }
       jobIds = self.selectJobIds([JobStatus.finished], invert=True)
       if len(jobIds) == 0:
         self.taskStatus.status = Status.CrabFinished
@@ -550,6 +556,7 @@ class Task:
       return False
 
     if self.isInLocalRunMode(recoveryIndex=self.recoveryIndex+1):
+      print(f'{self.name}: creating a local recovery task\nFiles to process: ' + ', '.join(filesToProcess))
       if self.recoveryIndex == self.maxRecoveryCount - 1:
         shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
         self.recoveryIndex += 1
@@ -557,7 +564,9 @@ class Task:
         self.lastJobStatusUpdate = -1.
         self.saveCfg()
         self.submit()
-      return True
+        return True
+      else:
+        return self.updateStatus()
 
     jobIds = self.selectJobIds([JobStatus.finished], invert=True)
     lumiMask = self.getRepresentativeLumiMask(filesToProcess)
