@@ -277,6 +277,11 @@ def copy_remote_file(input_remote_file, output_local_file, n_retries=4, retry_sl
                        error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
                        retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
+def natural_sort(l):
+  convert = lambda text: int(text) if text.isdigit() else text.lower()
+  alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+  return sorted(l, key=alphanum_key)
+
 if __name__ == "__main__":
   import sys
   cmd = sys.argv[1]

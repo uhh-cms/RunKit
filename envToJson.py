@@ -25,7 +25,7 @@ def get_env(script, python_cmd='python3'):
 def get_cmsenv(cmssw_path, python_cmd='python3', crab_env=False):
   script = f'source /cvmfs/cms.cern.ch/cmsset_default.sh; cd "{cmssw_path}"; eval `scramv1 runtime -sh`'
   if crab_env:
-    script += '; source /cvmfs/cms.cern.ch/common/crab-setup.sh'
+    script += '; alias python=$(which python3); source /cvmfs/cms.cern.ch/common/crab-setup.sh'
   return get_env(script, python_cmd=python_cmd)
 
 if __name__ == "__main__":

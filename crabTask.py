@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import tarfile
 
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,15 +13,15 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
-from .sh_tools import ShCallError, sh_call
+from .sh_tools import ShCallError, sh_call, natural_sort
+from .envToJson import get_cmsenv
 
 class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
-    'maxResubmitCount', 'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'postProcessingDoneFlag',
-    'ignoreLocality'
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality'
   ]
 
   _taskCfgPrivateProperties = [
@@ -61,18 +62,18 @@ class Task:
     self.ignoreLocality = False
     self.dryrun = False
     self.recoveryIndex = 0
-    self.maxResubmitCount = 0
     self.maxRecoveryCount = 0
     self.finalOutput = ''
     self.targetOutputFileSize = 0
     self.ignoreFiles = []
-    self.postProcessingDoneFlag = ''
     self.jobInputFiles = None
     self.datasetFiles = None
     self.fileRunLumi = None
     self.fileRepresentativeRunLumi = None
     self.taskIds = {}
     self.lastJobStatusUpdate = -1.
+    self.cmsswEnv = None
+    self.gridJobs = None
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -128,13 +129,25 @@ class Task:
       name += f'_recovery_{recoveryIndex}'
     return name
 
-  def getParams(self):
-    return [ f'{key}={value}' for key,value in self.params.items() ]
+  def getParams(self, appendDatasetFiles=True):
+    params = [ f'{key}={value}' for key,value in self.params.items() ]
+    if appendDatasetFiles:
+      datasetFileDir, datasetFileName = os.path.split(self.getDatasetFilesPath())
+      params.append(f'datasetFiles={datasetFileName}')
+    return params
+
+  def isInputDatasetLocal(self):
+    return self.inputDataset.startswith('local:')
+
+  def isInLocalRunMode(self, recoveryIndex=None):
+    if recoveryIndex is None:
+      recoveryIndex = self.recoveryIndex
+    return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
 
   def getUnitsPerJob(self):
-    if self.recoveryIndex > 0:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return 1
-    return self.unitsPerJob
+    return max(self.unitsPerJob // (2 ** self.recoveryIndex), 1)
 
   def getSplitting(self):
     if self.recoveryIndex > 0:
@@ -164,79 +177,76 @@ class Task:
       return True
     return self.ignoreLocality
 
+  def getFilesToTransfer(self, appendDatasetFiles=True):
+    if appendDatasetFiles:
+      return self.filesToTransfer + [ self.getDatasetFilesPath() ]
+    return self.filesToTransfer
 
-  def getLocalJobArea(self, recoveryIndex=None):
-    localArea = os.path.join(self.crabArea(recoveryIndex), 'local')
-    if not os.path.exists(localArea):
-      print(f'{self.name}: Preparing local job area ...')
-      sh_call(['crab', 'preparelocal', '-d', self.crabArea(recoveryIndex), f'--destdir={localArea}'],
-              catch_stdout=True, timeout=Task.crabOperationTimeout)
-    if not os.path.exists(localArea):
-      raise RuntimeError(f'{self.name}: unable to prepare local job area')
-    return localArea
+  def getCrabJobOutput(self):
+    return 'output.tar'
 
-  def getJobInputFilesTxtPath(self, recoveryIndex=None):
-    localJobArea = self.getLocalJobArea(recoveryIndex)
-    inputFilesPath = os.path.join(localJobArea, 'job_input_files')
-    if not os.path.exists(inputFilesPath):
-      os.mkdir(inputFilesPath)
-    if len(os.listdir(inputFilesPath)) == 0:
-      inputFilesTar = os.path.join(localJobArea, 'input_files.tar.gz')
-      sh_call(['tar', 'xf', inputFilesTar, '-C', inputFilesPath], catch_stdout=True, catch_stderr=True)
-    return inputFilesPath
+  def getCmsswEnv(self):
+    if self.cmsswEnv is None:
+      cmssw_path = os.environ['DEFAULT_CMSSW_BASE']
+      self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True)
+      self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
+      self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
+    return self.cmsswEnv
 
-  def getJobInputFiles(self, recoveryIndex=None):
-    if recoveryIndex is None:
-      recoveryIndex = self.recoveryIndex
-    if recoveryIndex == self.recoveryIndex and self.jobInputFiles is not None:
-      return self.jobInputFiles
-
-    jsonPath = os.path.join(self.crabArea(recoveryIndex), 'job_input_files.json')
-    if not os.path.exists(jsonPath):
-      jobInputFiles = {}
-      taskStatus = self.getTaskStatus(recoveryIndex=recoveryIndex)
-      if taskStatus.status_on_server != StatusOnServer.SUBMITFAILED:
-        txtPath = self.getJobInputFilesTxtPath(recoveryIndex)
-        for fileName in os.listdir(txtPath):
-          jobIdMatch = re.match(r'^job_input_file_list_(.*)\.txt$', fileName)
-          if jobIdMatch is None:
-            raise RuntimeError(f'Unable to extract job id from "{jobIdMatch}"')
-          jobId = jobIdMatch.group(1)
-          with open(os.path.join(txtPath, fileName), 'r') as f:
-            jobInputFiles[jobId] = json.load(f)
-      with open(jsonPath, 'w') as f:
-        json.dump(jobInputFiles, f, indent=2)
-    else:
-      with open(jsonPath, 'r') as f:
-        jobInputFiles = json.load(f)
-    if recoveryIndex == self.recoveryIndex:
-      self.jobInputFiles = jobInputFiles
-    return jobInputFiles
+  def getDatasetFilesPath(self):
+    return os.path.join(self.workArea, 'dataset_files.json')
 
   def getDatasetFiles(self):
     if self.datasetFiles is None:
-      datasetFilesPath = os.path.join(self.workArea, 'dataset_files.json')
+      datasetFilesPath = self.getDatasetFilesPath()
       fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
       if os.path.exists(datasetFilesPath):
         with open(datasetFilesPath, 'r') as f:
-          self.datasetFiles = set(json.load(f))
+          self.datasetFiles = json.load(f)
       else:
         if os.path.exists(fileRunLumiPath):
-          self.datasetFiles = set(self.getFileRunLumi().keys())
+          self.datasetFiles = {}
+          for file_id, file in enumerate(natural_sort(self.getFileRunLumi().keys())):
+            self.datasetFiles[file] = file_id
         else:
           print(f'{self.name}: Gathering dataset files ...')
-          _,output,_ = sh_call(['dasgoclient', '--query', f'file dataset={self.inputDataset}'],
-                               catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout)
-          self.datasetFiles = set()
-          for file in output:
-            file = file.strip()
-            if len(file) > 0:
-              self.datasetFiles.add(file)
+          if self.isInputDatasetLocal():
+            ds_path = self.inputDataset[len('local:'):]
+            if not os.path.exists(ds_path):
+              raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+            self.datasetFiles = {}
+            all_files = []
+            for subdir, dirs, files in os.walk(ds_path):
+              for file in files:
+                if file.endswith('.root') and not file.startswith('.'):
+                  all_files.append('file:' + os.path.join(subdir, file))
+            for file_id, file_path in enumerate(natural_sort(all_files)):
+              self.datasetFiles[file_path] = file_id
+          else:
+            _,output,_ = sh_call(['dasgoclient', '--query', f'file dataset={self.inputDataset}'],
+                                catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
+                                env=self.getCmsswEnv())
+            self.datasetFiles = {}
+            all_files = []
+            for file in output:
+              file = file.strip()
+              if len(file) > 0:
+                all_files.append(file)
+            for file_id, file in enumerate(natural_sort(all_files)):
+              self.datasetFiles[file] = file_id
         with open(datasetFilesPath, 'w') as f:
-          json.dump(list(self.datasetFiles), f, indent=2)
+          json.dump(self.datasetFiles, f, indent=2)
       if len(self.datasetFiles) == 0:
         raise RuntimeError(f'{self.name}: empty dataset {self.inputDataset}')
     return self.datasetFiles
+
+  def getDatasetFileById(self, file_id):
+    if type(file_id) is str:
+      file_id = int(file_id)
+    for file, fileId in self.getDatasetFiles().items():
+      if fileId == file_id:
+        return file
+    raise RuntimeError(f'{self.name}: unable to find file with id {file_id}')
 
   def getFileRunLumi(self):
     if self.fileRunLumi is None:
@@ -245,7 +255,8 @@ class Task:
       allRuns = f'file,run,lumi dataset={self.inputDataset}'
 
       def getDasInfo(cmd):
-        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout)
+        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
+                             env=self.getCmsswEnv())
         descs = []
         for desc in output:
           desc = desc.strip()
@@ -297,7 +308,10 @@ class Task:
             for runLumi in runLumis:
               if not hasOverlaps(fileRun, runLumi):
                 return (fileRun, runLumi)
-          raise RuntimeError(f"Unable to find representative (run, lumi) for {file}")
+          print(f"{self.name}: Unable to find representative (run, lumi) for {file}. Using the first one.")
+          fileRun = next(iter(fileRuns))
+          runLumi = fileRuns[fileRun][0]
+          return (fileRun, runLumi)
         self.fileRepresentativeRunLumi[file] = findFirstRepresentative()
     return self.fileRepresentativeRunLumi
 
@@ -314,10 +328,10 @@ class Task:
       lumiMask[run].append([lumi, lumi])
     return lumiMask
 
-  def selectJobIds(self, jobStatus, invert=False, recoveryIndex=None):
+  def selectJobIds(self, jobStatuses, invert=False, recoveryIndex=None):
     jobIds = []
     for jobId, status in self.getTaskStatus(recoveryIndex).get_job_status().items():
-      if (status == jobStatus and not invert) or (status != jobStatus and invert):
+      if (status in jobStatuses and not invert) or (status not in jobStatuses and invert):
         jobIds.append(jobId)
     return jobIds
 
@@ -348,14 +362,17 @@ class Task:
   def getTaskOutputPath(self, recoveryIndex=None):
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
-    datasetParts = [ s for s in self.inputDataset.split('/') if len(s) > 0 ]
-    datasetName = datasetParts[0]
-    outputBase = os.path.join(self.localCrabOutput, datasetName)
-    return os.path.join(outputBase, 'crab_' + self.requestName(recoveryIndex=recoveryIndex),
-                        self.getTaskId(recoveryIndex=recoveryIndex))
+    if self.isInLocalRunMode(recoveryIndex=recoveryIndex):
+      return os.path.join(self.localCrabOutput, 'local_' + self.requestName())
+    else:
+      datasetParts = [ s for s in self.inputDataset.split('/') if len(s) > 0 ]
+      datasetName = datasetParts[0]
+      outputBase = os.path.join(self.localCrabOutput, datasetName)
+      return os.path.join(outputBase, 'crab_' + self.requestName(recoveryIndex=recoveryIndex),
+                          self.getTaskId(recoveryIndex=recoveryIndex))
 
-  def findOutputFile(self, taskOutput, jobId, outputIndex):
-    outputName, outputExt = os.path.splitext(self.outputFiles[outputIndex])
+  def findOutputFile(self, taskOutput, jobId):
+    outputName, outputExt = os.path.splitext(self.getCrabJobOutput())
     fileName = f'{outputName}_{jobId}{outputExt}'
     outputFiles = []
     for root, dirs, files in os.walk(taskOutput):
@@ -371,58 +388,81 @@ class Task:
                          f' in {taskOutput}: ' + ' '.join(outputFiles))
     return outputFiles[0]
 
-  def getPostProcessList(self, outputIndex):
-    outputFile = self.outputFiles[outputIndex]
-    outputName = os.path.splitext(outputFile)[0]
-    return os.path.join(self.workArea, f'postProcessList_{outputName}.txt')
+  def getProcessedFilesFromTar(self, outputFile):
+    outputName, outputExt = os.path.splitext(self.outputFiles[0])
+    files = {}
+    with tarfile.open(outputFile, 'r') as tar:
+      files_in_tar = tar.getnames()
+      for file_in_tar in files_in_tar:
+        if file_in_tar.startswith(outputName):
+          file_id = file_in_tar[len(outputName) + 1:-len(outputExt)]
+          file = self.getDatasetFileById(file_id)
+          if file in files:
+            raise RuntimeError(f'{self.name}: duplicated file {file} in {outputFile}')
+          files[file] = file_id
+    return files
 
-  def preparePostProcessList(self, outputIndex):
-    listFile = self.getPostProcessList(outputIndex)
+  def getPostProcessList(self):
+    return os.path.join(self.workArea, 'postProcessList.json')
+
+  def preparePostProcessList(self):
+    listFile = self.getPostProcessList()
     if not os.path.exists(listFile):
-      allFiles = self.getDatasetFiles()
-      processedFiles = set()
-      outputFiles = []
-      for recoveryIndex in range(self.recoveryIndex + 1):
-        taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
-        jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
-        jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
-        for jobId, files in jobFilesDict.items():
-          if len(processedFiles.intersection(files)) == 0:
-            outputFile = self.findOutputFile(taskOutput, jobId, outputIndex)
-            outputFiles.append(outputFile)
-            processedFiles.update(files)
+      allFiles = set(self.getDatasetFiles().keys())
+      processedFiles, outputFiles = self.getProcessedFiles()
       missingFiles = list(allFiles - processedFiles - set(self.ignoreFiles))
       if len(missingFiles) > 0:
         raise RuntimeError(f'{self.name}: missing outputs for following input files: ' + ' '.join(missingFiles))
       with open(listFile, 'w') as f:
-        for file in outputFiles:
-          f.write(file + '\n')
-
-  def preparePostProcessLists(self):
-    for outputIndex in range(len(self.outputFiles)):
-      self.preparePostProcessList(outputIndex)
+        json.dump(outputFiles, f, indent=2)
 
   def getFinalOutput(self):
     return os.path.join(self.finalOutput, self.name)
+
+  def extractTarOutputs(self, outputIndex):
+    outputName, outputExt = os.path.splitext(self.outputFiles[outputIndex])
+    outputDir = os.path.join(self.finalOutput, f'.{self.name}.untar')
+    if not os.path.exists(outputDir):
+      os.makedirs(outputDir)
+    unpackedFiles = []
+    with open(self.getPostProcessList(), 'r') as f:
+      tarFiles = json.load(f)
+    for tarFile, packedFiles in tarFiles.items():
+      with tarfile.open(tarFile, 'r') as tar:
+        for _, packedFileId in packedFiles:
+          packedFile = f'{outputName}_{packedFileId}{outputExt}'
+          tar.extract(packedFile, outputDir)
+          unpackedFiles.append(os.path.join(outputDir, packedFile))
+    unpackedList = self.getPostProcessList() + f'.{outputName}.unpacked'
+    with open(unpackedList, 'w') as f:
+      for file in unpackedFiles:
+        f.write(file + '\n')
+    return unpackedList, outputDir
 
   def postProcessOutputs(self):
     haddnanoEx_path = os.path.join(os.path.dirname(__file__), 'haddnanoEx.py')
     for outputIndex in range(len(self.outputFiles)):
       outputName = self.outputFiles[outputIndex]
       outputNameBase, outputExt = os.path.splitext(outputName)
+      unpackedList, unpackedDir = self.extractTarOutputs(outputIndex)
       cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', self.getFinalOutput(),
               '--output-name', outputName, '--target-size', str(self.targetOutputFileSize),
-              '--file-list', self.getPostProcessList(outputIndex) ]
+              '--file-list', unpackedList ]
       _, output, _ = sh_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
       with open(os.path.join(self.workArea, f'postProcessing_{outputNameBase}.log'), 'w') as f:
         f.write(output)
+      if os.path.exists(unpackedDir):
+        shutil.rmtree(unpackedDir)
+      if os.path.exists(unpackedList):
+        os.remove(unpackedList)
     self.taskStatus.status = Status.PostProcessingFinished
     self.saveStatus()
 
   def getPostProcessingDoneFlagFile(self):
-    if len(self.postProcessingDoneFlag) == 0:
-      raise RuntimeError(f'{self.name}: the post-processing file-flag is not set.')
-    return os.path.join(self.workArea, self.postProcessingDoneFlag)
+    return os.path.join(self.workArea, 'post_processing_done.txt')
+
+  def getGridJobDoneFlagFile(self, job_id):
+    return os.path.join(self.workArea, 'grid_jobs_results', f'job_{job_id}.done')
 
   def hasFailedJobs(self):
     return JobStatus.failed in self.taskStatus.job_stat
@@ -434,30 +474,62 @@ class Task:
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
   def submit(self):
-    crabSubmitPath = os.path.join(os.path.dirname(__file__), 'crabSubmit.py')
-    if self.recoveryIndex == 0:
-      print(f'{self.name}: submitting ...')
-    try:
-      sh_call(['python3', crabSubmitPath, self.workArea], timeout=Task.crabOperationTimeout)
+    self.getDatasetFiles()
+    if self.isInLocalRunMode():
+      self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.Submitted
+      self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
+      self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
+      for job_id in self.getGridJobs():
+        self.taskStatus.details[str(job_id)] = { "State": "idle" }
       self.saveStatus()
-    except ShCallError as e:
-      crabArea = self.crabArea()
-      if os.path.exists(crabArea):
-        shutil.rmtree(crabArea)
-      raise e
+      return True
+    else:
+      crabSubmitPath = os.path.join(os.path.dirname(__file__), 'crabSubmit.py')
+      if self.recoveryIndex == 0:
+        print(f'{self.name}: submitting ...')
+      try:
+        timeout = None if self.dryrun else Task.crabOperationTimeout
+        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv())
+        self.taskStatus.status = Status.Submitted
+        self.saveStatus()
+      except ShCallError as e:
+        crabArea = self.crabArea()
+        if os.path.exists(crabArea):
+          shutil.rmtree(crabArea)
+        raise e
+      return False
 
   def updateStatus(self):
-    returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
-                                      catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout)
+    neen_local_run = False
     oldTaskStatus = self.taskStatus
-    self.taskStatus = LogEntryParser.Parse(output)
-    self.saveStatus()
-    with open(self.lastCrabStatusLog(), 'w') as f:
-      f.write('\n'.join(output))
-    self.getTaskId()
-    if self.taskStatus.status_on_scheduler in [StatusOnScheduler.SUBMITTED, StatusOnScheduler.COMPLETED]:
-      self.getJobInputFiles()
+    if self. isInLocalRunMode():
+      self.taskStatus = CrabTaskStatus()
+      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
+      self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
+      for job_id in self.getGridJobs():
+        job_flag_file = self.getGridJobDoneFlagFile(job_id)
+        if os.path.exists(job_flag_file):
+          with open(job_flag_file, 'r') as f:
+            job_status = f.read().strip()
+        else:
+          job_status = "idle"
+        self.taskStatus.details[str(job_id)] = { "State": job_status }
+      jobIds = self.selectJobIds([JobStatus.finished], invert=True)
+      if len(jobIds) == 0:
+        self.taskStatus.status = Status.CrabFinished
+      self.saveStatus()
+      neen_local_run = self.taskStatus.status != Status.CrabFinished
+    else:
+      returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
+                                        catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
+                                        env=self.getCmsswEnv())
+      self.taskStatus = LogEntryParser.Parse(output)
+      self.saveStatus()
+      with open(self.lastCrabStatusLog(), 'w') as f:
+        f.write('\n'.join(output))
+      self.getTaskId()
     now = datetime.datetime.now()
     hasUpdates = self.lastJobStatusUpdate <= 0
     if not hasUpdates:
@@ -473,31 +545,7 @@ class Task:
     if hasUpdates:
       self.lastJobStatusUpdate = now.timestamp()
       self.saveCfg()
-
-  def resubmit(self):
-    retries = self.taskStatus.get_detailed_job_stat('Retries', JobStatus.failed)
-    if len(retries) == 0:
-      return False
-    min_retries = min(retries.items(), key=lambda x: x[1])
-    max_retries = max(retries.items(), key=lambda x: x[1])
-    if min_retries[1] >= self.maxResubmitCount:
-      if self.taskStatus.status_on_scheduler == StatusOnScheduler.FAILED:
-        self.taskStatus.status = Status.WaitingForRecovery
-        self.saveStatus()
-      return False
-
-    report_str = f'{self.name}: resubmitting {len(retries)} failed jobs.'
-    if min_retries[1] == max_retries[1]:
-      report_str += f' All failed jobs have previous retries attempts = {min_retries[1]}.'
-    else:
-      report_str += f' Job {min_retries[0]}/{max_retries[0]} has min/max previous retries attempts'
-      report_str += f' = {min_retries[1]}/{max_retries[1]}.'
-    report_str += f' The max number of allowed attempts = {self.maxResubmitCount}.'
-    print(report_str)
-    sh_call(['crab', 'resubmit', '-d', self.crabArea()], catch_stdout=True, timeout=Task.crabOperationTimeout)
-    self.taskStatus.status = Status.InProgress
-    self.saveStatus()
-    return True
+    return neen_local_run
 
   def recover(self):
     filesToProcess = self.getFilesToProcess()
@@ -505,96 +553,138 @@ class Task:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
       self.taskStatus.status = Status.CrabFinished
       self.saveStatus()
-      return True
-
-    if self.recoveryIndex < self.maxRecoveryCount:
-      jobIds = self.selectJobIds(JobStatus.finished, invert=True)
-      lumiMask = self.getRepresentativeLumiMask(filesToProcess)
-      msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
-      msg += '\nUnfinished job ids: ' + ', '.join(jobIds)
-      msg += '\nFiles to process: ' + ', '.join(filesToProcess)
-      msg += '\nRepresentative lumi mask: ' + json.dumps(lumiMask)
-      print(msg)
-      n_lumi = sum([ len(x) for _, x in lumiMask.items()])
-      if n_lumi != len(filesToProcess):
-        raise RuntimeError(f"{self.name}: number of representative lumi sections != number of files to process.")
-      shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
-      self.recoveryIndex += 1
-      self.jobInputFiles = None
-      self.lastJobStatusUpdate = -1.
-      with open(self.getLumiMask(), 'w') as f:
-        json.dump(lumiMask, f)
-      self.saveCfg()
-      try:
-        self.submit()
-      except ShCallError as e:
-        self.recoveryIndex -= 1
-        self.saveCfg()
-        raise e
-      return True
-    else:
-      self.taskStatus.status = Status.Failed
-      self.saveStatus()
       return False
 
-  def recoverLocal(self):
-    print(f'{self.name}: local recovery is not implemented.')
-    self.taskStatus.status = Status.Failed
-    self.saveStatus()
+    if self.isInLocalRunMode(recoveryIndex=self.recoveryIndex+1):
+      print(f'{self.name}: creating a local recovery task\nFiles to process: ' + ', '.join(filesToProcess))
+      if self.recoveryIndex == self.maxRecoveryCount - 1:
+        shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
+        self.recoveryIndex += 1
+        self.jobInputFiles = None
+        self.lastJobStatusUpdate = -1.
+        self.saveCfg()
+        self.submit()
+        return True
+      else:
+        return self.updateStatus()
+
+    jobIds = self.selectJobIds([JobStatus.finished], invert=True)
+    lumiMask = self.getRepresentativeLumiMask(filesToProcess)
+    msg = f'{self.name}: creating a recovery task. Attempt {self.recoveryIndex + 1}/{self.maxRecoveryCount}.'
+    msg += '\nUnfinished job ids: ' + ', '.join(jobIds)
+    msg += '\nFiles to process: ' + ', '.join(filesToProcess)
+    msg += '\nRepresentative lumi mask: ' + json.dumps(lumiMask)
+    print(msg)
+    n_lumi = sum([ len(x) for _, x in lumiMask.items()])
+    if n_lumi != len(filesToProcess):
+      raise RuntimeError(f"{self.name}: number of representative lumi sections != number of files to process.")
+    shutil.copy(self.statusPath, os.path.join(self.workArea, f'status_{self.recoveryIndex}.json'))
+    self.recoveryIndex += 1
+    self.jobInputFiles = None
+    self.lastJobStatusUpdate = -1.
+    with open(self.getLumiMask(), 'w') as f:
+      json.dump(lumiMask, f)
+    self.saveCfg()
+    try:
+      self.submit()
+    except ShCallError as e:
+      self.recoveryIndex -= 1
+      self.saveCfg()
+      raise e
     return False
 
-  def kill(self):
-    self.getJobInputFiles()
-    sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout)
+  def gridJobsFile(self):
+    return os.path.join(self.workArea, 'grid_jobs.json')
 
-  def getFilesToProcess(self, lastRecoveryIndex=None, includeNotFinishedFromLastIteration=True):
-    allFiles = self.getDatasetFiles()
-    processedFiles = set()
+  def getGridJobs(self):
+    if not self.isInLocalRunMode():
+      return {}
+    if self.gridJobs is None:
+      if os.path.exists(self.gridJobsFile()):
+        with open(self.gridJobsFile(), 'r') as f:
+          self.gridJobs = { int(key) : value for key,value in json.load(f).items() }
+      else:
+        self.gridJobs = {}
+        job_id = 0
+        units_per_job = self.getUnitsPerJob()
+        for file in self.getFilesToProcess():
+          while True:
+            if job_id not in self.gridJobs:
+              self.gridJobs[job_id] = []
+            if len(self.gridJobs[job_id]) < units_per_job:
+              self.gridJobs[job_id].append(file)
+              break
+            else:
+              job_id += 1
+        with open(self.gridJobsFile(), 'w') as f:
+          json.dump(self.gridJobs, f, indent=2)
+    return self.gridJobs
+
+  def runJobLocally(self, job_id, job_home):
+    print(f'{self.name}: running job {job_id} locally in {job_home}.')
+    if not os.path.exists(job_home):
+      os.makedirs(job_home)
+
+    ana_path = os.environ['ANALYSIS_PATH']
+    for file in self.getFilesToTransfer(appendDatasetFiles=False):
+      shutil.copy(os.path.join(ana_path, file), job_home)
+    cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
+            'writePSet=True', 'mustProcessAllInputs=True' ]
+    cmd.extend(self.getParams(appendDatasetFiles=False))
+    file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
+    if len(file_list) == 0:
+      return False
+    file_list = ','.join(file_list)
+    cmd.append(f'inputFiles={file_list}')
+    sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
+    _, scriptName = os.path.split(self.scriptExe)
+    sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+    output_path = self.getTaskOutputPath()
+    if not os.path.exists(output_path):
+      os.makedirs(output_path)
+    job_output = os.path.join(job_home, self.getCrabJobOutput())
+    if not os.path.exists(job_output):
+      raise RuntimeError(f'{self.name}: job output file {job_output} was not produced.')
+    out_name, out_ext = os.path.splitext(self.getCrabJobOutput())
+    final_output = os.path.join(output_path, f'{out_name}_{job_id}{out_ext}')
+    shutil.move(job_output, final_output)
+    return True
+
+  def kill(self):
+    if self.isInLocalRunMode():
+      print(f'{self.name}: cannot kill a task with local jobs.')
+    else:
+      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv())
+
+  def getProcessedFiles(self, lastRecoveryIndex=None):
     if lastRecoveryIndex is None:
       lastRecoveryIndex = self.recoveryIndex
+    processedFiles = set()
+    outputFiles = {}
     for recoveryIndex in range(lastRecoveryIndex + 1):
-      if recoveryIndex != self.recoveryIndex or includeNotFinishedFromLastIteration:
-        jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
-        jobFilesDict = { job : files for job, files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
-      else:
-        jobFilesDict = self.getJobInputFiles(recoveryIndex)
-      for key, files in jobFilesDict.items():
-        if len(processedFiles.intersection(files)) == 0:
-          processedFiles.update(files)
+      taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
+      jobIds = self.selectJobIds([JobStatus.finished], recoveryIndex=recoveryIndex)
+      for jobId in jobIds:
+        outputFile = self.findOutputFile(taskOutput, jobId)
+        files = self.getProcessedFilesFromTar(outputFile)
+        for file, file_id in files.items():
+          if file not in processedFiles:
+            if outputFile not in outputFiles:
+              outputFiles[outputFile] = []
+            outputFiles[outputFile].append([file, file_id])
+            processedFiles.add(file)
+    return processedFiles, outputFiles
+
+  def getFilesToProcess(self, lastRecoveryIndex=None):
+    allFiles = set(self.getDatasetFiles().keys())
+    processedFiles, _ = self.getProcessedFiles(lastRecoveryIndex=lastRecoveryIndex)
     return list(allFiles - processedFiles - set(self.ignoreFiles))
 
-  def checkCompleteness(self, includeNotFinishedFromLastIteration=True):
-    def file_set(d):
-      all_files = set()
-      for key, files in d.items():
-        for file in files:
-          if file in all_files:
-            raise RuntimeError(f'Duplicated file entry "{file}"')
-          all_files.add(file)
-      return all_files
-
-    filesToProcess = self.getFilesToProcess(includeNotFinishedFromLastIteration=includeNotFinishedFromLastIteration)
+  def checkCompleteness(self):
+    filesToProcess = self.getFilesToProcess()
     if len(filesToProcess):
       print(f'{self.name}: task is not complete. The following files still needs to be processed: {filesToProcess}')
       return False
-
-    processedFiles = set()
-
-    for recoveryIndex in range(self.recoveryIndex + 1):
-      jobFilesDict = self.getJobInputFiles(recoveryIndex)
-      jobFiles = file_set(jobFilesDict)
-
-      intersection = processedFiles.intersection(jobFiles)
-      if len(intersection):
-        print(f'{self.name}: Duplicated files for iteration {recoveryIndex}')
-        print(f'Input files for iteration {recoveryIndex}: {jobFilesDict}')
-        print(f'Files that have been already processed: {intersection}')
-        return False
-
-      jobIds = self.selectJobIds(JobStatus.finished, recoveryIndex=recoveryIndex)
-      jobFilesDict = { job : files for job,files in self.getJobInputFiles(recoveryIndex).items() if job in jobIds }
-      jobFiles = file_set(jobFilesDict)
-      processedFiles.update(jobFilesDict)
     return True
 
   def updateConfig(self, mainCfg, taskCfg):
@@ -612,6 +702,12 @@ class Task:
       inputDataset = taskCfg[taskName]
     if inputDataset != self.inputDataset:
       raise RuntimeError(f'{self.name}: change of input dataset is not possible')
+    for job_id in self.getGridJobs():
+      job_id = str(job_id)
+      if job_id in self.taskStatus.details and self.taskStatus.details[job_id]["State"] == "failed":
+        job_flag_file = self.getGridJobDoneFlagFile(job_id)
+        if os.path.exists(job_flag_file):
+          os.remove(job_flag_file)
 
     self.saveCfg()
     if self.taskStatus.status == Status.Failed:
