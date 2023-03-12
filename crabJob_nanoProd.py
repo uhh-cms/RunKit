@@ -62,11 +62,9 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     sh_call(cmsDrive_cmd, verbose=1)
     sh_call(cmssw_cmd, verbose=1)
 
-    shutil.move(output_file, cmsDriver_out)
-
-
-  skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
   if run_skim:
+    shutil.move(output_file, cmsDriver_out)
+    skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
     with open(skim_cfg, 'r') as f:
       skim_config = yaml.safe_load(f)
 
