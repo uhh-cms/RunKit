@@ -21,7 +21,7 @@ class Task:
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
-    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality'
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
   ]
 
   _taskCfgPrivateProperties = [
@@ -74,6 +74,7 @@ class Task:
     self.lastJobStatusUpdate = -1.
     self.cmsswEnv = None
     self.gridJobs = None
+    self.crabType = ''
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -188,7 +189,7 @@ class Task:
   def getCmsswEnv(self):
     if self.cmsswEnv is None:
       cmssw_path = os.environ['DEFAULT_CMSSW_BASE']
-      self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True)
+      self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True, crab_type=self.crabType)
       self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
       self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
     return self.cmsswEnv

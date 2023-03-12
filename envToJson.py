@@ -22,10 +22,10 @@ def get_env(script, python_cmd='python3'):
     del env['_']
   return env
 
-def get_cmsenv(cmssw_path, python_cmd='python3', crab_env=False):
+def get_cmsenv(cmssw_path, python_cmd='python3', crab_env=False, crab_type=''):
   script = f'source /cvmfs/cms.cern.ch/cmsset_default.sh; cd "{cmssw_path}"; eval `scramv1 runtime -sh`'
   if crab_env:
-    script += '; alias python=$(which python3); source /cvmfs/cms.cern.ch/common/crab-setup.sh'
+    script += f'; alias python=$(which python3); source /cvmfs/cms.cern.ch/common/crab-setup.sh {crab_type}'
   return get_env(script, python_cmd=python_cmd)
 
 if __name__ == "__main__":
