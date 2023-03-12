@@ -17,13 +17,12 @@ def checkRootFile(root_file, tree_name, branches=None, verbose=1):
       branches = [ str(b) for b in df.GetColumnNames()]
     if verbose > 1:
       print(f'{root_file}: {tree_name} checking branches={branches}')
-    hists = [ df.Histo1D(b) for b in branches]
+    hist_model = ROOT.RDF.TH1DModel('', '', 1, 0, 1)
+    hists = [ df.Histo1D(hist_model, b) for b in branches]
     for h_idx, h in enumerate(hists):
       integral = h.GetValue().Integral()
-      mean = h.GetValue().GetMean()
-      std = h.GetValue().GetStdDev()
-      if verbose > 1:
-        print(f'{root_file}: {tree_name}.{branches[h_idx]} integral={integral} mean={mean} std={std}')
+      if verbose > 2:
+        print(f'{root_file}: {tree_name}.{branches[h_idx]} integral={integral}')
     return True
   except:
     if verbose > 0:
