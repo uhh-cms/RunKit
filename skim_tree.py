@@ -99,7 +99,7 @@ def name_match(column, pattern):
     return column == pattern
 
 all_columns = [ str(c) for c in df.GetColumnNames() ]
-simple_types = [ 'Int_t', 'UInt_t', 'Long64_t', 'ULong64_t' ]
+simple_types = [ 'Int_t', 'UInt_t', 'Long64_t', 'ULong64_t', 'int', 'long' ]
 column_types = { c : str(df.GetColumnType(c)) for c in all_columns }
 all_columns = sorted(all_columns, key=lambda c: (column_types[c] not in simple_types, c))
 selected_columns = { c for c in all_columns }
