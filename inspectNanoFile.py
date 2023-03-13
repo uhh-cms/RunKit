@@ -13,12 +13,12 @@ class FileData:
         self._json = data
         for k,v in data.items():
             setattr(self,k,v)
-        self.Events = self.trees["Events"]
-        self.nevents = self.Events["entries"]
-        self.Runs = self.trees["Runs"]
-        self.nruns = self.Runs["entries"]
-        self.LuminosityBlocks = self.trees["LuminosityBlocks"]
-        self.nluminosityblocks = self.LuminosityBlocks["entries"]
+        self.Events = self.trees.get("Events")
+        self.nevents = self.Events["entries"] if self.Events else 0
+        self.Runs = self.trees.get("Runs")
+        self.nruns = self.Runs["entries"] if self.Runs else 0
+        self.LuminosityBlocks = self.trees.get("LuminosityBlocks")
+        self.nluminosityblocks = self.LuminosityBlocks["entries"] if self.LuminosityBlocks else 0
 
 class Branch:
     def __init__(self, tree, branch):
@@ -43,6 +43,9 @@ class Branch:
         if self.leaf.GetLen() == 0 and self.leaf.GetLeafCount() != None:
             self.single = False
             self.counter = self.leaf.GetLeafCount().GetName()
+        elif self.kind.startswith('ROOT::VecOps::RVec<'):
+            self.single = False
+            self.counter = f'n{self.name.split("_")[0]}'
     def toJSON(self):
         return ( self.name, dict(name = self.name, doc = self.doc, tot=self.tot, entries=self.entries, single=self.single, kind=self.kind, counter = getattr(self,'counter','')) )
 
@@ -94,6 +97,7 @@ def inspectRootFile(infile):
     for treeName in "Events", "Runs", "LuminosityBlocks":
         toplevelDoc={}
         tree = tfile.Get(treeName)
+        if not tree: continue
         entries = tree.GetEntries()
         trees[treeName] = tree
         branchList = tree.GetListOfBranches()
@@ -450,9 +454,9 @@ if __name__ == '__main__':
         sys.stderr.write("JSON output saved to %s\n" % options.json)
 
     treedata = {}  # trees for (HTML or markdown) doc report
-    if len(filedata.Runs["branches"]) > 1:  # default: run number
+    if filedata.Runs and len(filedata.Runs["branches"]) > 1:  # default: run number
         treedata["Runs"] = filedata.Runs
-    if len(filedata.LuminosityBlocks["branches"]) > 2:  # default: run number, lumiblock
+    if filedata.LuminosityBlocks and len(filedata.LuminosityBlocks["branches"]) > 2:  # default: run number, lumiblock
         treedata["LuminosityBlocks"] = filedata.LuminosityBlocks
     treedata["Events"] = filedata.Events
 
