@@ -10,6 +10,10 @@ options.register('cmsRunOptions', '', VarParsing.multiplicity.singleton, VarPars
                  "Comma separated list of options that should be passed to cmsRun.")
 options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Skimming configuration in YAML format.")
+options.register('skimSetup', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Name of the skim setup for passed events.")
+options.register('skimSetupFailed', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Name of the skim setup for failed events.")
 options.register('storeFailed', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Store minimal information about events that failed selection.")
 options.register('mustProcessAllInputs', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
@@ -45,6 +49,8 @@ process.exParams = cms.untracked.PSet(
   cmsRunCfg = cms.untracked.string(options.cmsRunCfg),
   cmsRunOptions = cms.untracked.string(options.cmsRunOptions),
   skimCfg = cms.untracked.string(options.skimCfg),
+  skimSetup = cms.untracked.string(options.skimSetup),
+  skimSetupFailed = cms.untracked.string(options.skimSetupFailed),
   storeFailed = cms.untracked.bool(options.storeFailed),
   customisationCommands = cms.untracked.string(options.customiseCmds),
   createTar = cms.untracked.bool(options.createTar),

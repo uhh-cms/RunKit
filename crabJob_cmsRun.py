@@ -1,24 +1,6 @@
-import shutil
 import os
-import yaml
-
+import shutil
 from sh_tools import sh_call
-
-def getFilePath(file):
-  if os.path.exists(file):
-    return file
-  file_name = os.path.basename(file)
-  if os.path.exists(file_name):
-    return file_name
-  if 'ANALYSIS_PATH' in os.environ:
-    file_path = os.path.join(os.environ['ANALYSIS_PATH'], file)
-    if os.path.exists(file_path):
-      return file_path
-  if 'CMSSW_BASE' in os.environ:
-    file_path = os.path.join(os.environ['CMSSW_BASE'], 'src', file)
-    if os.path.exists(file_path):
-      return file_path
-  raise RuntimeError(f"Unable to find {file}")
 
 def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
   run_cmsRun = True
@@ -58,42 +40,12 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     cmsRun_out = output_name + '_cmsRun' + output_ext
     shutil.move(output_file, cmsRun_out)
     skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
-    with open(skim_cfg, 'r') as f:
-      skim_config = yaml.safe_load(f)
-
-    cmd_line = ['python3', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                '--input-tree', skim_config['input_tree'], '--verbose', '1']
-
-    if 'other_trees' in skim_config:
-      cmd_line.extend(['--other-trees', ','.join(skim_config['other_trees'])])
-
-    if 'selection' in skim_config:
-      selection = skim_config['selection']
-      cmd_line.extend(['--sel', selection])
-
-    if 'processing_module' in skim_config:
-      proc_module = skim_config['processing_module']
-      cmd_line.extend(['--processing-module', getFilePath(proc_module['file']) + ':' + proc_module['function']])
-
-    if 'column_filters' in skim_config:
-      columns = ','.join(skim_config['column_filters'])
-      cmd_line.extend([f'--column-filters', columns])
-
+    cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
+                '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
     sh_call(cmd_line, verbose=1)
 
     if store_failed:
-      cmd_line = ['python3', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                  '--input-tree', skim_config['input_tree'], '--output-tree', skim_config['output_failed_tree'], '--update-output', '--verbose', '1']
-
-      if 'selection' in skim_config:
-        cmd_line.extend(['--invert-sel', '--sel', selection])
-
-      if 'processing_module_for_failed' in skim_config:
-        proc_module = skim_config['processing_module_for_failed']
-        cmd_line.extend(['--processing-module', getFilePath(proc_module['file']) + ':' + proc_module['function']])
-
-      if 'column_filters_for_failed' in skim_config:
-        columns = ','.join(skim_config['column_filters_for_failed'])
-        cmd_line.extend([f'--column-filters', columns])
-
+      cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
+                  '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetupFailed,
+                   '--skip-empty', '--update-output', '--verbose', '1']
       sh_call(cmd_line, verbose=1)

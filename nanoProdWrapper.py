@@ -10,6 +10,10 @@ options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varTyp
                  "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018")
 options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Skimming configuration in YAML format.")
+options.register('skimSetup', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Name of the skim setup for passed events.")
+options.register('skimSetupFailed', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Name of the skim setup for failed events.")
 options.register('storeFailed', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Store minimal information about events that failed selection.")
 options.register('mustProcessAllInputs', False, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
@@ -63,6 +67,8 @@ process.exParams = cms.untracked.PSet(
   era = cms.untracked.string(options.era + ',run2_nanoAOD_106Xv2'),
   cond = cms.untracked.string(cond),
   skimCfg = cms.untracked.string(options.skimCfg),
+  skimSetup = cms.untracked.string(options.skimSetup),
+  skimSetupFailed = cms.untracked.string(options.skimSetupFailed),
   storeFailed = cms.untracked.bool(options.storeFailed),
   customisationFunction = cms.untracked.string(options.customise),
   customisationCommands = cms.untracked.string(options.customiseCmds),
