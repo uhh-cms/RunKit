@@ -280,6 +280,11 @@ if __name__ == "__main__":
     other_trees = setup.get('other_trees', [])
     hists = setup.get('hists', [])
     sel = setup.get('sel', None)
+    sel_ref = setup.get('sel_ref', None)
+    if sel and sel_ref:
+      raise RuntimeError("Both 'sel' and 'sel_ref' are specified.")
+    if sel_ref:
+      sel = skim_config[sel_ref]
     invert_sel = setup.get('invert_sel', False)
     column_filters = setup.get('column_filters', [])
     if 'processing_module' in setup:
