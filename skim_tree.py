@@ -115,6 +115,13 @@ def get_columns(df):
 
 def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range, snapshot_options,
               column_filters, sel, invert_sel, processing_module, processing_function, verbose=0):
+  if len(inputs) == 0:
+    if verbose > 0:
+      print(f'No inputs files to skim "input_tree". An empty output file will be created.')
+    compression_settings = snapshot_options.fCompressionAlgorithm * 100 + snapshot_options.fCompressionLevel
+    output_file = ROOT.TFile.Open(output, 'RECREATE', '', compression_settings)
+    output_file.Close()
+    return
 
   df = ROOT.RDataFrame(input_tree, inputs)
 
