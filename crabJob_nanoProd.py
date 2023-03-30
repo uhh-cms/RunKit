@@ -48,12 +48,12 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     shutil.move(output_file, cmsRun_out)
     skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
     cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                '--config', cfg_params.skimConfig, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
+                '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
     sh_call(cmd_line, verbose=1)
 
     if store_failed:
       cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                  '--config', cfg_params.skimConfig, '--setup', cfg_params.skimSetupFailed,
+                  '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetupFailed,
                    '--skip-empty', '--update-output', '--verbose', '1']
       sh_call(cmd_line, verbose=1)
 

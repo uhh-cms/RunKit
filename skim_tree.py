@@ -145,14 +145,14 @@ def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range
 
   if sel:
     if invert_sel:
-      df = df.Define('__passSkimSel', args.sel).Filter('!__passSkimSel')
+      df = df.Define('__passSkimSel', sel).Filter('!__passSkimSel')
     else:
-      df = df.Filter(args.sel)
+      df = df.Filter(sel)
 
   if output_range is not None:
     df = df.Range(*output_range)
 
-  if args.verbose > 0:
+  if verbose > 0:
     print("Creating a snapshot...")
   df.Snapshot(output_tree, output, branches, snapshot_options)
 
@@ -164,7 +164,7 @@ def copy_tree(inputs, tree_name, output, snapshot_options, verbose=0):
   all_columns, column_types = get_columns(df)
   for column in all_columns:
     branches.push_back(column)
-    if args.verbose > 2:
+    if verbose > 2:
       print(f"\tAdding column '{column_types[column]} {column}'...")
   df.Snapshot(tree_name, output, branches, snapshot_options)
 
