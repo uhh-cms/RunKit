@@ -287,12 +287,16 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       if os.path.exists(law_task_dir):
         shutil.rmtree(law_task_dir)
 
+      n_cpus = local_proc_params.get('nCPU', 1)
       cmd = [ 'law', 'run', local_proc_params['lawTask'],
               '--workflow', local_proc_params['workflow'],
               '--bootstrap-path', local_proc_params['bootstrap'],
               '--work-area', abs_work_area,
               '--log-path', os.path.join(abs_work_area, 'law', 'logs'),
-              '--sub-dir', law_sub_dir ]
+              '--sub-dir', law_sub_dir,
+              '--n-cpus', str(n_cpus),
+              '--transfer-logs',
+      ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
       sh_call(cmd)

@@ -75,6 +75,7 @@ class Task:
     self.cmsswEnv = None
     self.gridJobs = None
     self.crabType = ''
+    self.processedFilesCache = None
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -423,8 +424,9 @@ class Task:
   def extractTarOutputs(self, outputIndex):
     outputName, outputExt = os.path.splitext(self.outputFiles[outputIndex])
     outputDir = os.path.join(self.finalOutput, f'.{self.name}.untar')
-    if not os.path.exists(outputDir):
-      os.makedirs(outputDir)
+    if os.path.exists(outputDir):
+      shutil.rmtree(outputDir)
+    os.makedirs(outputDir, exist_ok=True)
     unpackedFiles = []
     with open(self.getPostProcessList(), 'r') as f:
       tarFiles = json.load(f)
@@ -432,7 +434,10 @@ class Task:
       with tarfile.open(tarFile, 'r') as tar:
         for _, packedFileId in packedFiles:
           packedFile = f'{outputName}_{packedFileId}{outputExt}'
-          tar.extract(packedFile, outputDir)
+          try:
+            tar.extract(packedFile, outputDir)
+          except OSError as e:
+            raise RuntimeError(f'{self.name}: unable to extract {packedFile} from {tarFile}: {e}')
           unpackedFiles.append(os.path.join(outputDir, packedFile))
     unpackedList = self.getPostProcessList() + f'.{outputName}.unpacked'
     with open(unpackedList, 'w') as f:
@@ -445,6 +450,7 @@ class Task:
     for outputIndex in range(len(self.outputFiles)):
       outputName = self.outputFiles[outputIndex]
       outputNameBase, outputExt = os.path.splitext(outputName)
+      print(f'{self.name}: extracting outputs for {outputName} from tars...')
       unpackedList, unpackedDir = self.extractTarOutputs(outputIndex)
       cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', self.getFinalOutput(),
               '--output-name', outputName, '--target-size', str(self.targetOutputFileSize),
@@ -530,6 +536,8 @@ class Task:
       self.saveStatus()
       with open(self.lastCrabStatusLog(), 'w') as f:
         f.write('\n'.join(output))
+      if self.taskStatus.status == Status.Unknown:
+        print(f'{self.name}: {self.taskStatus.status}. Parse error: {self.taskStatus.parse_error}')
       self.getTaskId()
     now = datetime.datetime.now()
     hasUpdates = self.lastJobStatusUpdate <= 0
@@ -660,20 +668,47 @@ class Task:
   def getProcessedFiles(self, lastRecoveryIndex=None):
     if lastRecoveryIndex is None:
       lastRecoveryIndex = self.recoveryIndex
+    cache_file = os.path.join(self.workArea, 'processed_files.json')
+    has_changes = False
+    if self.processedFilesCache is None:
+      if os.path.exists(cache_file):
+        with open(cache_file, 'r') as f:
+          self.processedFilesCache = json.load(f)
+      else:
+        self.processedFilesCache = {}
+        has_changes = True
+
+    def getFiles(recoveryIndex, taskOutput, jobId):
+      nonlocal has_changes
+      if recoveryIndex not in self.processedFilesCache:
+        self.processedFilesCache[recoveryIndex] = {}
+      if jobId not in self.processedFilesCache[recoveryIndex]:
+        outputFile = self.findOutputFile(taskOutput, jobId)
+        files = self.getProcessedFilesFromTar(outputFile)
+        self.processedFilesCache[recoveryIndex][jobId] = {
+          'outputFile' : outputFile,
+          'files' : files
+        }
+        has_changes = True
+      entry = self.processedFilesCache[recoveryIndex][jobId]
+      return entry['outputFile'], entry['files']
+
     processedFiles = set()
     outputFiles = {}
     for recoveryIndex in range(lastRecoveryIndex + 1):
       taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
       jobIds = self.selectJobIds([JobStatus.finished], recoveryIndex=recoveryIndex)
       for jobId in jobIds:
-        outputFile = self.findOutputFile(taskOutput, jobId)
-        files = self.getProcessedFilesFromTar(outputFile)
+        outputFile, files = getFiles(recoveryIndex, taskOutput, jobId)
         for file, file_id in files.items():
           if file not in processedFiles:
             if outputFile not in outputFiles:
               outputFiles[outputFile] = []
             outputFiles[outputFile].append([file, file_id])
             processedFiles.add(file)
+    if has_changes:
+      with open(cache_file, 'w') as f:
+        json.dump(self.processedFilesCache, f, indent=2)
     return processedFiles, outputFiles
 
   def getFilesToProcess(self, lastRecoveryIndex=None):

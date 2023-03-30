@@ -150,6 +150,13 @@ class LogEntryParser:
       task_status.status_on_scheduler = StatusOnScheduler[value]
     return n + 1
 
+  def crab_dev(task_status, log_lines, n, value):
+    task_status.crab_dev = value
+    n += 1
+    if log_lines[n].strip() == "Be sure to have a good reason for using it":
+      n += 1
+    return n
+
   def warning(task_status, log_lines, n, value):
     warning_text = value
     while n < len(log_lines) - 1:
@@ -294,6 +301,7 @@ class LogEntryParser:
     return n + 1
 
   _parser_dict = {
+    "BEWARE: this is the development version of CRAB Client.": crab_dev,
     "CRAB project directory:": "project_dir",
     "Task name:": "task_name",
     "Grid scheduler - Task Worker:": sched_worker,
