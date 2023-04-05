@@ -280,13 +280,12 @@ class LogEntryParser:
 
     waste_str = log_lines[n + shift].strip()
     match = re.match(r'^\* Waste: ([0-9]+:[0-9]+:[0-9]+) \(([0-9]+)% of total\)$', waste_str)
-    if match is None:
-      raise RuntimeError(f'Invalid waste stat = "{waste_str}"')
-    task_status.run_stat["CPU"] = {
-      'time': to_seconds(match.group(1)),
-      'fraction_of_total': int(match.group(2)),
-    }
-    shift += 1
+    if match is not None:
+      task_status.run_stat["CPU"] = {
+        'time': to_seconds(match.group(1)),
+        'fraction_of_total': int(match.group(2)),
+      }
+      shift += 1
 
     return n + shift
 
