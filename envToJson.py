@@ -22,15 +22,22 @@ def get_env(script, python_cmd='python3'):
     del env['_']
   return env
 
-def get_cmsenv(cmssw_path, python_cmd='python3', crab_env=False, crab_type=''):
+def get_cmsenv(cmssw_path, python_cmd=None, crab_env=False, crab_type=''):
   script = f'source /cvmfs/cms.cern.ch/cmsset_default.sh; cd "{cmssw_path}"; eval `scramv1 runtime -sh`'
+  if not python_cmd:
+    python_cmd = 'python3'
+    _, cmssw_release_str = os.path.split(os.path.abspath(cmssw_path))
+    cmssw_id_parts = cmssw_release_str.split('_')
+    if len(cmssw_id_parts) > 1 and int(cmssw_id_parts[1]) < 10:
+      python_cmd = 'python'
   if crab_env:
-    script += f'; alias python=$(which python3); source /cvmfs/cms.cern.ch/common/crab-setup.sh {crab_type}'
+    if python_cmd != 'python':
+      script += '; alias python=$(which python3)'
+    script += f'; source /cvmfs/cms.cern.ch/common/crab-setup.sh {crab_type}'
   return get_env(script, python_cmd=python_cmd)
 
 if __name__ == "__main__":
   script = ' '.join(sys.argv[1:])
-
   env = get_env(script)
   #env = get_cmsenv(sys.argv[1])
   print(json.dumps(env, indent=2))
