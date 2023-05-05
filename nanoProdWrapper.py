@@ -8,6 +8,8 @@ options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing
                  "Indicates the sample type: data or mc")
 options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018")
+options.register('nanoVersion', 'v10', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Indicates nanoAOD version: v10 or v11")
 options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Skimming configuration in YAML format.")
 options.register('skimSetup', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -46,8 +48,18 @@ cond_mc = {
   'Run2_2016': 'auto:run2_mc',
   'Run2_2017': 'auto:phase1_2017_realistic',
   'Run2_2018': 'auto:phase1_2018_realistic',
+  'Run3_2022': '126X_mcRun3_2022_realistic_v2',
+  'Run3_2022EE': '126X_mcRun3_2022_realistic_postEE_v1',
 }
-cond_data = 'auto:run2_data'
+
+if options.era.startswith('Run2'):
+  cond_data = 'auto:run2_data'
+  era_str = options.era
+elif options.era.startswith('Run3'):
+  era_str = 'Run3'
+  cond_data = '124X_dataRun3_Prompt_v10'
+else:
+  raise RuntimeError(f'Unknown era = "{options.era}"')
 
 if options.sampleType == 'data':
   cond = cond_data
@@ -55,6 +67,13 @@ elif options.sampleType == 'mc':
   cond = cond_mc[options.era]
 else:
   raise RuntimeError(f'Unknown sample type = "{options.sampleType}"')
+
+if options.nanoVersion == 'v10':
+  era_mod = ',run2_nanoAOD_106Xv2'
+elif options.nanoVersion == 'v11':
+  era_mod = ',run3_nanoAOD_124'
+else:
+  raise RuntimeError(f'Unknown nanoAOD version = "{options.nanoVersion}"')
 
 process = cms.Process('NanoProd')
 process.source = cms.Source("PoolSource", fileNames = cms.untracked.vstring(options.inputFiles))
@@ -64,7 +83,7 @@ if options.maxEvents > 0:
   process.maxEvents.input = options.maxEvents
 process.exParams = cms.untracked.PSet(
   sampleType = cms.untracked.string(options.sampleType),
-  era = cms.untracked.string(options.era + ',run2_nanoAOD_106Xv2'),
+  era = cms.untracked.string(era_str + era_mod),
   cond = cms.untracked.string(cond),
   skimCfg = cms.untracked.string(options.skimCfg),
   skimSetup = cms.untracked.string(options.skimSetup),
