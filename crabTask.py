@@ -646,19 +646,21 @@ class Task:
             'writePSet=True', 'mustProcessAllInputs=True' ]
     cmd.extend(self.getParams(appendDatasetFiles=False))
     file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
-    if len(file_list) == 0:
-      return False
-    file_list = ','.join(file_list)
-    cmd.append(f'inputFiles={file_list}')
-    sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
-    _, scriptName = os.path.split(self.scriptExe)
-    sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+    job_output = os.path.join(job_home, self.getCrabJobOutput())
+    if len(file_list) > 0:
+      file_list = ','.join(file_list)
+      cmd.append(f'inputFiles={file_list}')
+      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
+      _, scriptName = os.path.split(self.scriptExe)
+      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+    else:
+      tar = tarfile.open(job_output, 'w')
+      tar.close()
+    if not os.path.exists(job_output):
+      raise RuntimeError(f'{self.name}: job output file {job_output} was not produced.')
     output_path = self.getTaskOutputPath()
     if not os.path.exists(output_path):
       os.makedirs(output_path)
-    job_output = os.path.join(job_home, self.getCrabJobOutput())
-    if not os.path.exists(job_output):
-      raise RuntimeError(f'{self.name}: job output file {job_output} was not produced.')
     out_name, out_ext = os.path.splitext(self.getCrabJobOutput())
     final_output = os.path.join(output_path, f'{out_name}_{job_id}{out_ext}')
     shutil.move(job_output, final_output)
