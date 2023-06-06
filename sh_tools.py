@@ -218,12 +218,15 @@ def gfal_copy(input_remote_file, output_local_file, voms_token, number_of_stream
   repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
                        n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
-def das_file_site_info(file, verbose=0):
-  _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'site file={file}'], catch_stdout=True, verbose=verbose)
+def das_file_site_info(file, inputDBS='global', verbose=0):
+  query = f'site file={file}'
+  if inputDBS != 'global':
+    query += f' instance=prod/{inputDBS}'
+  _, output, _ = sh_call(['dasgoclient', '--json', '--query', query], catch_stdout=True, verbose=verbose)
   return json.loads(output)
 
-def das_file_pfns(file, disk_only=True, return_adler32=False, verbose=0):
-  site_info = das_file_site_info(file, verbose=verbose)
+def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', verbose=0):
+  site_info = das_file_site_info(file, inputDBS=inputDBS, verbose=verbose)
   pfns_disk = set()
   pfns_other = set()
   adler32 = None
@@ -248,8 +251,10 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, verbose=0):
     return pfns, adler32
   return pfns
 
-def copy_remote_file(input_remote_file, output_local_file, n_retries=4, retry_sleep_interval=10, verbose=1):
-  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, verbose=verbose)
+def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
+                     verbose=1):
+  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, inputDBS=inputDBS,
+                                     verbose=verbose)
   if os.path.exists(output_local_file):
     if adler32 is not None and check_download(output_local_file, expected_adler32sum=adler32):
       return

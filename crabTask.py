@@ -225,7 +225,10 @@ class Task:
             for file_id, file_path in enumerate(natural_sort(all_files)):
               self.datasetFiles[file_path] = file_id
           else:
-            _,output,_ = sh_call(['dasgoclient', '--query', f'file dataset={self.inputDataset}'],
+            query = f'file dataset={self.inputDataset}'
+            if self.inputDBS != 'global':
+              query += f' instance=prod/{self.inputDBS}'
+            _,output,_ = sh_call(['dasgoclient', '--query', query],
                                 catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
                                 env=self.getCmsswEnv())
             self.datasetFiles = {}
@@ -255,6 +258,8 @@ class Task:
       fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
       cmdBase = ['dasgoclient', '--query']
       allRuns = f'file,run,lumi dataset={self.inputDataset}'
+      if self.inputDBS != 'global':
+        allRuns += f' instance=prod/{self.inputDBS}'
 
       def getDasInfo(cmd):
         _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
