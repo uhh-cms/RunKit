@@ -290,11 +290,18 @@ class LogEntryParser:
 
     return n + shift
 
-  def task_boostrapped(task_status, log_lines, n, value):
+  def task_bootstrapped(task_status, log_lines, n, value):
     if n + 1 >= len(log_lines) or log_lines[n + 1].strip() != LogEntryParser.status_will_be_available:
       raise RuntimeError("Unexpected bootstrap message")
     task_status.status = Status.Bootstrapped
     return n + 2
+
+  def bootstrap_failed(task_status, log_lines, n, value):
+    task_status.status_on_scheduler = StatusOnScheduler.FAILED
+    n += 1
+    if log_lines[n].strip().startswith('Hold reason:'):
+      n += 1
+    return n
 
   def details(task_status, log_entries, n, value):
     task_status.details = json.loads(log_entries[n])
@@ -315,9 +322,10 @@ class LogEntryParser:
     "Error Summary:": error_summary,
     "Log file is": "crab_log_file",
     "Summary of run jobs:": run_summary,
-    "Task bootstrapped": task_boostrapped,
+    "Task bootstrapped": task_bootstrapped,
     "Failure message from server:": failure,
     "{": details,
+    "The task failed to bootstrap on the Grid scheduler": bootstrap_failed,
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
