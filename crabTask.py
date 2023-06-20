@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 import tarfile
+import time
 
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -426,7 +427,7 @@ class Task:
   def getFinalOutput(self):
     return os.path.join(self.finalOutput, self.name)
 
-  def extractTarOutputs(self, outputIndex):
+  def extractTarOutputs(self, outputIndex, max_tries=4, try_delay=10):
     outputName, outputExt = os.path.splitext(self.outputFiles[outputIndex])
     outputDir = os.path.join(self.finalOutput, f'.{self.name}.untar')
     if os.path.exists(outputDir):
@@ -436,13 +437,30 @@ class Task:
     with open(self.getPostProcessList(), 'r') as f:
       tarFiles = json.load(f)
     for tarFile, packedFiles in tarFiles.items():
+      print(tarFile)
       with tarfile.open(tarFile, 'r') as tar:
         for _, packedFileId in packedFiles:
           packedFile = f'{outputName}_{packedFileId}{outputExt}'
-          try:
-            tar.extract(packedFile, outputDir)
-          except OSError as e:
-            raise RuntimeError(f'{self.name}: unable to extract {packedFile} from {tarFile}: {e}')
+          packedSize = tar.getmember(packedFile).size
+          for try_idx in range(max_tries):
+            try:
+              print(f'  {packedFile}', end=' ', flush=True)
+              unpackedFile = os.path.join(outputDir, packedFile)
+              if os.path.exists(unpackedFile):
+                os.remove(unpackedFile)
+              tar.extract(packedFile, outputDir)
+              unpackedSize = os.path.getsize(unpackedFile)
+              if unpackedSize != packedSize:
+                raise RuntimeError(f"Unpacked file size = {unpackedSize} doesn't match the packed size = {packedSize}.")
+              print('ok')
+              break
+            except (OSError, RuntimeError) as e:
+              if try_idx == max_tries - 1:
+                print('failed')
+                raise RuntimeError(f'{self.name}: unable to extract {packedFile} from {tarFile}: {e}')
+              else:
+                print(f'failed (attempt {try_idx+1}/{max_tries})')
+                time.sleep(try_delay)
           unpackedFiles.append(os.path.join(outputDir, packedFile))
     unpackedList = self.getPostProcessList() + f'.{outputName}.unpacked'
     with open(unpackedList, 'w') as f:
