@@ -8,8 +8,6 @@ options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing
                  "Indicates the sample type: data or mc")
 options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018")
-options.register('nanoVersion', 'v10', VarParsing.multiplicity.singleton, VarParsing.varType.string,
-                 "Indicates nanoAOD version: v10 or v11")
 options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Skimming configuration in YAML format.")
 options.register('skimSetup', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -55,9 +53,11 @@ cond_mc = {
 if options.era.startswith('Run2'):
   cond_data = 'auto:run2_data'
   era_str = options.era
+  era_mod = ',run2_nanoAOD_106Xv2'
 elif options.era.startswith('Run3'):
-  era_str = 'Run3'
   cond_data = '124X_dataRun3_Prompt_v10'
+  era_str = 'Run3'
+  era_mod = ''
 else:
   raise RuntimeError(f'Unknown era = "{options.era}"')
 
@@ -67,13 +67,6 @@ elif options.sampleType == 'mc':
   cond = cond_mc[options.era]
 else:
   raise RuntimeError(f'Unknown sample type = "{options.sampleType}"')
-
-if options.nanoVersion == 'v10':
-  era_mod = ',run2_nanoAOD_106Xv2'
-elif options.nanoVersion == 'v11':
-  era_mod = ',run3_nanoAOD_124'
-else:
-  raise RuntimeError(f'Unknown nanoAOD version = "{options.nanoVersion}"')
 
 process = cms.Process('NanoProd')
 process.source = cms.Source("PoolSource", fileNames = cms.untracked.vstring(options.inputFiles))

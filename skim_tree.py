@@ -134,7 +134,7 @@ def skim_tree(inputs, input_tree, output, output_tree, input_range, output_range
     df = fn(df)
 
   all_columns, column_types = get_columns(df)
-  selected_columns = select_items(all_columns, column_filters)
+  selected_columns = select_items(all_columns, column_filters, verbose=verbose)
 
   branches = ROOT.vector('string')()
   for column in all_columns:

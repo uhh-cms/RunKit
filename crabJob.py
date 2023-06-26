@@ -58,6 +58,9 @@ def exit(exit_code, exit_message=''):
     shutil.move(_cmssw_report, _final_report)
   else:
     make_job_report(exit_code, exit_message)
+  if exit_code != 0:
+    sys_exit = exit_code if exit_code >= 0 and exit_code <= 255 else 1
+    sys.exit(sys_exit)
 
 def getFilePath(file):
   if os.path.exists(file):

@@ -1,9 +1,19 @@
+import copy
 import law
 import luigi
 import math
 import os
 
 law.contrib.load("htcondor")
+
+def copy_param(ref_param, new_default):
+  param = copy.deepcopy(ref_param)
+  param._default = new_default
+  return param
+
+def get_param_value(cls, param_name):
+    param = getattr(cls, param_name)
+    return param.task_value(cls.__name__, param_name)
 
 class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     max_runtime = law.DurationParameter(default=24.0, unit="h", significant=False,
@@ -12,7 +22,7 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     requirements = luigi.Parameter(default='')
     #requirements = luigi.Parameter(default='( (OpSysAndVer =?= "CentOS7") || (OpSysAndVer =?= "CentOS8") )')
     bootstrap_path = luigi.Parameter()
-    log_path = luigi.Parameter()
+    log_path = luigi.Parameter(default='')
     sub_dir = luigi.Parameter()
 
     def htcondor_output_directory(self):
@@ -31,9 +41,10 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
         config.custom_content.append(("+MaxRuntime", int(math.floor(self.max_runtime * 3600)) - 1))
         config.custom_content.append(("RequestCpus", self.n_cpus))
 
-        log_path = os.path.abspath(self.log_path)
-        os.makedirs(log_path, exist_ok=True)
-        config.custom_content.append(("log", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).log')))
-        config.custom_content.append(("output", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).out')))
-        config.custom_content.append(("error", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).err')))
+        if len(self.log_path) > 0:
+            log_path = os.path.abspath(self.log_path)
+            os.makedirs(log_path, exist_ok=True)
+            config.custom_content.append(("log", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).log')))
+            config.custom_content.append(("output", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).out')))
+            config.custom_content.append(("error", os.path.join(log_path, 'job.$(ClusterId).$(ProcId).err')))
         return config
