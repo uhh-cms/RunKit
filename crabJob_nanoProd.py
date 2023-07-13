@@ -33,6 +33,18 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
 
     customise = cfg_params.customisationFunction
     if len(customise) > 0:
+      print(f'Using customisation function "{customise}"')
+      customise_path, customise_fn = customise.split('.')
+      customise_path = customise_path.split('/')
+      if len(customise_path) == 3:
+        customise_dir = os.path.join(os.environ['CMSSW_BASE'], 'src', customise_path[0], customise_path[1], 'python')
+        customise_file = customise_path[2] + '.py'
+        customise_file_path = os.path.join(customise_dir, customise_file)
+        if not os.path.exists(customise_file_path):
+          sandbox_file = module_path = os.path.join(os.path.dirname(__file__), customise_path[2] + '.py')
+          if os.path.exists(sandbox_file):
+            os.makedirs(customise_dir, exist_ok=True)
+            shutil.copy(sandbox_file, customise_file_path)
       cmsDrive_cmd.extend(['--customise', customise])
 
     customise_commands = cfg_params.customisationCommands
