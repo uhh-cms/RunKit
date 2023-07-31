@@ -7,7 +7,7 @@ options = VarParsing('analysis')
 options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Indicates the sample type: data or mc")
 options.register('era', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
-                 "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018")
+                 "Indicates era: Run2_2016_HIPM, Run2_2016, Run2_2017, Run2_2018, Run3_2022, Run3_2022_postEE")
 options.register('skimCfg', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Skimming configuration in YAML format.")
 options.register('skimSetup', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -32,6 +32,8 @@ options.register('writePSet', False, VarParsing.multiplicity.singleton, VarParsi
                  "Dump configuration into PSet.py.")
 options.register('copyInputsToLocal', True, VarParsing.multiplicity.singleton, VarParsing.varType.bool,
                  "Copy inputs (one at the time) to a job working directory before processing them.")
+options.register('inputDBS', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "DBS instance")
 options.register('output', 'nano.root', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Name of the output file.")
 options.register('datasetFiles', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -97,6 +99,7 @@ process.exParams = cms.untracked.PSet(
   datasetFiles = cms.untracked.string(options.datasetFiles),
   maxFiles = cms.untracked.int32(options.maxFiles),
   copyInputsToLocal = cms.untracked.bool(options.copyInputsToLocal),
+  inputDBS = cms.untracked.string(options.inputDBS),
 )
 
 if options.writePSet:

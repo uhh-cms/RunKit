@@ -5,8 +5,12 @@ from sh_tools import sh_call
 if __name__ == '__main__':
   for dataset in sys.argv[1:]:
     try:
-      _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset}'],
-                             catch_stdout=True)
+      if dataset.endswith("USER"): # Embedded samples
+        _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset} instance=prod/phys03'],
+                               catch_stdout=True)
+      else: 
+        _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset}'],
+                               catch_stdout=True)
       entries = json.loads(output)
       #print(json.dumps(info, indent=2))
       ds_infos = []
