@@ -724,7 +724,7 @@ class Task:
       taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
       jobIds = self.selectJobIds([JobStatus.finished], recoveryIndex=recoveryIndex)
       for jobId in jobIds:
-        outputFile, files = getFiles(recoveryIndex, taskOutput, jobId)
+        outputFile, files = getFiles(str(recoveryIndex), taskOutput, jobId)
         for file, file_id in files.items():
           if file not in processedFiles:
             if outputFile not in outputFiles:
