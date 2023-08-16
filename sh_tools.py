@@ -189,7 +189,12 @@ def xrd_copy(input_remote_file, output_local_file, n_retries=4, n_retries_xrdcp=
   if os.path.exists(output_local_file):
     os.remove(output_local_file)
 
-  repeat_until_success(download, opt_list=[ (prefix, ) for prefix in prefixes ], raise_error=True,
+  if input_remote_file.startswith("/store/"):
+    optlist = [ (prefix, ) for prefix in prefixes ]
+  else:
+    optlist = [ ("", ) ]
+
+  repeat_until_success(download, opt_list=optlist, raise_error=True,
                        error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
                        retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
@@ -252,7 +257,7 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
   return pfns
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
-                     verbose=1):
+                     custom_pfns_prefix=None, verbose=1):
   pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, inputDBS=inputDBS,
                                      verbose=verbose)
   if os.path.exists(output_local_file):
@@ -261,12 +266,18 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
     os.remove(output_local_file)
 
   if len(pfns_list) == 0:
-    raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
+    if input_remote_file.startswith('/store/'):
+      if custom_pfns_prefix != None:
+        pfns_list = [custom_pfns_prefix+input_remote_file, input_remote_file]
+      else:
+        pfns_list = [input_remote_file]
+    else:
+      raise RuntimeError(f'Unable to find any remote location for {input_remote_file}.')
 
   def download(pfns):
     if verbose > 0:
       print(f"Trying to copy file from {pfns}")
-    if pfns.startswith('root:'):
+    if pfns.startswith('root:') or pfns.startswith('/store/'):
       xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, n_retries=1, prefixes=[''], verbose=verbose)
     # elif pfns.startswith('davs:'):
     #   voms_info = get_voms_proxy_info()

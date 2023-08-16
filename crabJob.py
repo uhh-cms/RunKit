@@ -116,7 +116,7 @@ def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, para
     else:
       local_file = f'input_{file_id}.root'
       tmp_files.append(local_file)
-      copy_remote_file(input_file, local_file, verbose=1)
+      copy_remote_file(input_file, local_file, inputDBS=params.inputDBS, custom_pfns_prefix=params.PFNSprefix, verbose=1)
       module_input_file = f'file:{local_file}'
     jobModule.processFile(module_input_file, output_file, tmp_files, cmssw_report, cmd_line_args, params)
     result = True
