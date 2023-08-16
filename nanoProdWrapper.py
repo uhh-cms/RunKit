@@ -34,6 +34,8 @@ options.register('copyInputsToLocal', True, VarParsing.multiplicity.singleton, V
                  "Copy inputs (one at the time) to a job working directory before processing them.")
 options.register('inputDBS', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "DBS instance")
+options.register('PFNSprefix', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+                 "Custom pfns prefix for input files")
 options.register('output', 'nano.root', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Name of the output file.")
 options.register('datasetFiles', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -100,6 +102,7 @@ process.exParams = cms.untracked.PSet(
   maxFiles = cms.untracked.int32(options.maxFiles),
   copyInputsToLocal = cms.untracked.bool(options.copyInputsToLocal),
   inputDBS = cms.untracked.string(options.inputDBS),
+  PFNSprefix = cms.untracked.string(options.PFNSprefix),
 )
 
 if options.writePSet:
