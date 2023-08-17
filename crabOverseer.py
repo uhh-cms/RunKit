@@ -150,6 +150,7 @@ def update(tasks, no_status_update=False):
   to_post_process = []
   to_run_locally = []
   for task_name, task in tasks.items():
+    print(task_name)
     if task.taskStatus.status == Status.Defined:
       if task.submit():
         to_run_locally.append(task)
@@ -161,16 +162,16 @@ def update(tasks, no_status_update=False):
         if task.recover():
           to_run_locally.append(task)
     sanity_checks(task)
-    if task.taskStatus.status == Status.CrabFinished:
-      if task.checkCompleteness():
-        task.preparePostProcessList()
-        done_flag = task.getPostProcessingDoneFlagFile()
-        if os.path.exists(done_flag):
-          os.remove(done_flag)
-        to_post_process.append(task)
-      else:
-        if task.recover():
-          to_run_locally.append(task)
+    # if task.taskStatus.status == Status.CrabFinished:
+    #   if task.checkCompleteness():
+    #     task.preparePostProcessList()
+    #     done_flag = task.getPostProcessingDoneFlagFile()
+    #     if os.path.exists(done_flag):
+    #       os.remove(done_flag)
+    #     to_post_process.append(task)
+    #   else:
+    #     if task.recover():
+    #       to_run_locally.append(task)
     stat.add(task)
   stat.report()
   return to_post_process, to_run_locally

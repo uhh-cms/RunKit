@@ -382,12 +382,28 @@ class Task:
   def findOutputFile(self, taskOutput, jobId):
     outputName, outputExt = os.path.splitext(self.getCrabJobOutput())
     fileName = f'{outputName}_{jobId}{outputExt}'
-    outputFiles = []
-    for root, dirs, files in os.walk(taskOutput):
-      for file in files:
-        if file == fileName:
-          filePath = os.path.join(root, file)
-          outputFiles.append(filePath)
+    if taskOutput.startswith("/pnfs/desy.de") and not os.path.exists("/pnfs/desy.de"):
+      # uberftp lookup
+      import re
+      import subprocess
+      cmd = f"uberftp -glob on dcache-door-cms04.desy.de \"ls {taskOutput}/0*/{fileName}\""
+      p = subprocess.run(cmd, shell=True, capture_output=True)
+      if p.returncode:
+        raise Exception(f"command '{cmd}' failed with error: {p.stderr}")
+      outputExtEsc = outputExt.replace(".", r"\.")
+      outputFiles = [
+        m.group(1)
+        for line in (line.strip() for line in p.stdout.decode("utf-8").replace("\r\n", "\n").split("\n"))
+        if (m := re.match(rf"^-rw.+(/pnfs/desy.de/[^\s]+/{outputName}_{jobId}{outputExtEsc}).*$", line))
+      ]
+    else:
+      # original implementation
+      outputFiles = []
+      for root, dirs, files in os.walk(taskOutput):
+        for file in files:
+          if file == fileName:
+            filePath = os.path.join(root, file)
+            outputFiles.append(filePath)
     if len(outputFiles) == 0:
       raise RuntimeError(f'{self.name}: unable to find output for jobId={jobId} outputName={outputName}' + \
                          f' in {taskOutput}')
