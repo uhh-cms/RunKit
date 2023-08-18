@@ -7,6 +7,8 @@ import shutil
 import sys
 import tarfile
 import time
+import glob
+import subprocess
 
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -725,7 +727,45 @@ class Task:
         self.processedFilesCache[recoveryIndex] = {}
       if jobId not in self.processedFilesCache[recoveryIndex]:
         outputFile = self.findOutputFile(taskOutput, jobId)
-        files = self.getProcessedFilesFromTar(outputFile)
+        # old
+        # files = self.getProcessedFilesFromTar(outputFile)
+        # new:        
+        files = {}
+        # get crab logs for specific Id
+        crab_path = self.crabArea(int(recoveryIndex))
+        crab_log_cmd_list = ['crab', 'getlog', crab_path, '--short', '--jobids', jobId]
+        crab_log_cmd = " ".join(crab_log_cmd_list)
+        print("before getlog", glob.glob(os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")))
+        try:
+          p = sh_call(crab_log_cmd_list, env=self.getCmsswEnv(), catch_stdout=True)
+        except ShCallError as err:
+          raise RuntimeError(f"Crab logs coudn't get generated with command '{crab_log_cmd}'. SHCallError: {err}")
+
+        # find jobId files
+        results_path = os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")
+        job_files = glob.glob(results_path)
+        print("after getlog",job_files)
+        # only highest job_out.Id.*.txt, is needed
+        job_txt = sorted(job_files,reverse=True)[0]
+
+        # get root file information out of log
+        matching_result = None
+        with open(job_txt, "r") as file:
+          for line in file.readlines():
+            matching_result = re.search("input_\d.root", line)
+            if matching_result:
+              break
+
+        if not matching_result:
+          raise Exception("Input root name was not found in Log")
+
+        # extract number
+        file_id = matching_result.group().replace("input_","").replace(".root","")
+        file = self.getDatasetFileById(file_id)
+        if file in files:
+          raise RuntimeError(f'{self.name}: duplicated file {file} in {outputFile}')
+        files[file] = file_id
+
         self.processedFilesCache[recoveryIndex][jobId] = {
           'outputFile' : outputFile,
           'files' : files
