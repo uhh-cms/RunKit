@@ -254,6 +254,11 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     for task_list_file in new_task_list_files:
       with open(task_list_file, 'r') as f:
         new_tasks = yaml.safe_load(f)
+      # hack: flatten datasets in new_tasks
+      for key, value in new_tasks.items():
+        if key != "config" and isinstance(value, dict):
+          new_tasks[key] = value["miniAOD"]
+      # end of hack
       for task_name in new_tasks:
         if task_name == 'config': continue
         if task_name in tasks:
