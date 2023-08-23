@@ -752,7 +752,7 @@ class Task:
         matching_result = None
         with open(job_txt, "r") as file:
           for line in file.readlines():
-            matching_result = re.search("input_\d.root", line)
+            matching_result = re.search("input_\d+.root", line)
             if matching_result:
               break
 
