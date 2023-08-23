@@ -10,6 +10,8 @@ import time
 import glob
 import subprocess
 
+from tqdm import tqdm
+
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
   sys.path.append(os.path.dirname(file_dir))
@@ -721,6 +723,28 @@ class Task:
         self.processedFilesCache = {}
         has_changes = True
 
+    def getLogsForJobIDs(jobIds: list):
+      # get crab logs for specific Id
+      crab_path = self.crabArea(int(recoveryIndex))
+      crab_log_cmd_list = [
+        'crab',
+        'getlog',
+        crab_path,
+        '--short',
+        '--jobids',
+        ",".join(jobIds)
+      ]
+      crab_log_cmd = " ".join(crab_log_cmd_list)
+      #print("before getlog", glob.glob(os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")))
+      njobs = len(jobIds)
+      time_estimate = 0.15*njobs
+      print(f"obtaining log files for {njobs} jobs, estimated time: {time_estimate:.2f}s")
+      print(crab_log_cmd)
+      try:
+        p = sh_call(crab_log_cmd_list, env=self.getCmsswEnv(), catch_stdout=True)
+      except ShCallError as err:
+        raise RuntimeError(f"Crab logs coudn't get generated with command '{crab_log_cmd}'. SHCallError: {err}")
+    
     def getFiles(recoveryIndex, taskOutput, jobId):
       nonlocal has_changes
       if recoveryIndex not in self.processedFilesCache:
@@ -731,36 +755,25 @@ class Task:
         # files = self.getProcessedFilesFromTar(outputFile)
         # new:        
         files = {}
-        # get crab logs for specific Id
         crab_path = self.crabArea(int(recoveryIndex))
-        crab_log_cmd_list = ['crab', 'getlog', crab_path, '--short', '--jobids', jobId]
-        crab_log_cmd = " ".join(crab_log_cmd_list)
-        print("before getlog", glob.glob(os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")))
-        try:
-          p = sh_call(crab_log_cmd_list, env=self.getCmsswEnv(), catch_stdout=True)
-        except ShCallError as err:
-          raise RuntimeError(f"Crab logs coudn't get generated with command '{crab_log_cmd}'. SHCallError: {err}")
-
         # find jobId files
         results_path = os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")
         job_files = glob.glob(results_path)
-        print("after getlog",job_files)
+        #print("after getlog",job_files)
         # only highest job_out.Id.*.txt, is needed
         job_txt = sorted(job_files,reverse=True)[0]
 
         # get root file information out of log
         matching_result = None
         with open(job_txt, "r") as file:
-          for line in file.readlines():
-            matching_result = re.search("input_\d+.root", line)
-            if matching_result:
-              break
-
-        if not matching_result:
-          raise Exception("Input root name was not found in Log")
+          matching_result = set(re.findall("input_\d+.root", file.read()))
+          if len(matching_result) > 1:
+            raise Exception(f"Found no clear match for regex 'input_\d+.root' in file '{job_txt}'")
+          else:
+            (matching_result,) = matching_result
 
         # extract number
-        file_id = matching_result.group().replace("input_","").replace(".root","")
+        file_id = matching_result.replace("input_","").replace(".root","")
         file = self.getDatasetFileById(file_id)
         if file in files:
           raise RuntimeError(f'{self.name}: duplicated file {file} in {outputFile}')
@@ -779,7 +792,12 @@ class Task:
     for recoveryIndex in range(lastRecoveryIndex + 1):
       taskOutput = self.getTaskOutputPath(recoveryIndex=recoveryIndex)
       jobIds = self.selectJobIds([JobStatus.finished], recoveryIndex=recoveryIndex)
-      for jobId in jobIds:
+      # create all job output files
+      getLogsForJobIDs(jobIds=jobIds)
+      pbar_jobIds = tqdm(jobIds)
+      njobs = len(jobIds)
+      for n, jobId in enumerate(pbar_jobIds):
+        pbar_jobIds.set_description(f"Analysing jobID {n}/{njobs}")
         outputFile, files = getFiles(str(recoveryIndex), taskOutput, jobId)
         for file, file_id in files.items():
           if file not in processedFiles:
