@@ -249,6 +249,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     with open(task_list_path, 'r') as f:
       task_names = json.load(f)
       for task_name in task_names:
+        # print("get config from", task_name)
         tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
   if len(new_task_list_files) > 0:
     for task_list_file in new_task_list_files:
@@ -307,8 +308,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
-      sh_call(cmd)
-      for task in to_post_process + to_run_locally:
+      print("No local processing here")
+      # sh_call(cmd)
+      for task in to_post_process:  # + to_run_locally:
         task.updateStatusFromFile()
       print(timestamp_str() + "Local grid processing iteration finished.")
     has_unfinished = False

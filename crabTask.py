@@ -149,7 +149,7 @@ class Task:
   def isInLocalRunMode(self, recoveryIndex=None):
     if recoveryIndex is None:
       recoveryIndex = self.recoveryIndex
-    return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
+    return self.isInputDatasetLocal() or recoveryIndex > self.maxRecoveryCount
 
   def getUnitsPerJob(self):
     if self.recoveryIndex >= self.maxRecoveryCount - 1:
@@ -726,24 +726,29 @@ class Task:
     def getLogsForJobIDs(jobIds: list):
       # get crab logs for specific Id
       crab_path = self.crabArea(int(recoveryIndex))
-      crab_log_cmd_list = [
-        'crab',
-        'getlog',
-        crab_path,
-        '--short',
-        '--jobids',
-        ",".join(jobIds)
-      ]
-      crab_log_cmd = " ".join(crab_log_cmd_list)
-      #print("before getlog", glob.glob(os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")))
-      njobs = len(jobIds)
-      time_estimate = 0.15*njobs
-      print(f"obtaining log files for {njobs} jobs, estimated time: {time_estimate:.2f}s")
-      print(crab_log_cmd)
-      try:
-        p = sh_call(crab_log_cmd_list, env=self.getCmsswEnv(), catch_stdout=True)
-      except ShCallError as err:
-        raise RuntimeError(f"Crab logs coudn't get generated with command '{crab_log_cmd}'. SHCallError: {err}")
+      logs_list = os.listdir(os.path.join(crab_path,"results"))
+      logs_id_list = [log_id.split(".")[1] for log_id in logs_list]
+      if set(jobIds)==set(logs_id_list):
+        print("all logs already present in ", crab_path)
+      else:
+        crab_log_cmd_list = [
+          'crab',
+          'getlog',
+          crab_path,
+          '--short',
+          '--jobids',
+          ",".join(jobIds)
+        ]
+        crab_log_cmd = " ".join(crab_log_cmd_list)
+        #print("before getlog", glob.glob(os.path.join(crab_path, "results", f"job_out.{jobId}.*.txt")))
+        njobs = len(jobIds)
+        time_estimate = 0.15*njobs
+        print(f"obtaining log files for {njobs} jobs, estimated time: {time_estimate:.2f}s")
+        print(crab_log_cmd)
+        try:
+          p = sh_call(crab_log_cmd_list, env=self.getCmsswEnv(), catch_stdout=True)
+        except ShCallError as err:
+          raise RuntimeError(f"Crab logs coudn't get generated with command '{crab_log_cmd}'. SHCallError: {err}")
     
     def getFiles(recoveryIndex, taskOutput, jobId):
       nonlocal has_changes
