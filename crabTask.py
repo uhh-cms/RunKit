@@ -282,7 +282,10 @@ class Task:
       if not os.path.exists(fileRunLumiPath):
         print(f'{self.name}: Gathering file->(run,lumi) correspondance ...')
         self.fileRunLumi = {}
-        for file, runs, lumis in getDasInfo(cmdBase + [allRuns]):
+        info_tuple_bar = tqdm(getDasInfo(cmdBase + [allRuns]))
+        info_tuple_bar.set_description(f"Collecting info")
+
+        for file, runs, lumis in info_tuple_bar:
           if type(lumis) != list:
             raise RuntimeError(f'Unexpected lumis type for "{file}"')
           if type(runs) == int or len(runs) == 1:
@@ -795,9 +798,8 @@ class Task:
       # create all job output files
       getLogsForJobIDs(jobIds=jobIds)
       pbar_jobIds = tqdm(jobIds)
-      njobs = len(jobIds)
+      pbar_jobIds.set_description(f"Analysing jobids")
       for n, jobId in enumerate(pbar_jobIds):
-        pbar_jobIds.set_description(f"Analysing jobID {n}/{njobs}")
         outputFile, files = getFiles(str(recoveryIndex), taskOutput, jobId)
         for file, file_id in files.items():
           if file not in processedFiles:
